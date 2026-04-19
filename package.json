@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "country-flag-icons": "^1.6.15",
+    "libphonenumber-js": "^1.12.41",
+    "react-select": "^5.10.2"
+  }
+}
