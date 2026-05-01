@@ -29,6 +29,8 @@ const RequestDetails = React.lazy(()=> import('./pages/Requests/RequestDetails.j
 const Pulses = React.lazy(()=> import('./pages/Pulses_pages/Pulses.jsx'));
 const RequestOffer = React.lazy(() => import('./pages/Requests/RequestOffer'));
 const Contact = React.lazy(() => import('./pages/User_pages/Contact.jsx'));
+const AIChat = React.lazy(() => import('./pages/AIChat'));
+
 const NotificationHandler = ({ currentUser }) => {
     const location = useLocation();
     const navigate = useNavigate();
@@ -478,6 +480,7 @@ function App() {
                 <Routes>
                     <Route path="/login" element={<Login onLoginSuccess={fetchUser} />} />
                     <Route path="/signup" element={<SignUp />} />
+                    <Route path="/ai-chat" element={<AIChat />} />
 
                     <Route element={user ? <Outlet /> : <Navigate to="/login" replace />}>
                         <Route path="/" element={<Index user={user} />} />
