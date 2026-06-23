@@ -3860,6 +3860,7 @@ def ai_chat(request):
     try:
         data = json.loads(request.body.decode("utf-8"))
         question = data.get("question", "").strip()
+        history = data.get("history", [])  # list of {role, content} dicts
 
         if not question:
             return StreamingHttpResponse(
@@ -3867,9 +3868,20 @@ def ai_chat(request):
                 status=400
             )
 
+        # Basic validation: only keep well-formed history entries
+        clean_history = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in history
+            if isinstance(msg, dict)
+            and msg.get("role") in ("user", "assistant")
+            and isinstance(msg.get("content"), str)
+            # Exclude the current question — it's already in `question`
+            and not (msg["role"] == "user" and msg["content"] == question)
+        ]
+
         def event_stream():
-            for chunk in ask_ai(question):
-                yield chunk  # raw text streaming
+            for chunk in ask_ai(question, history=clean_history):
+                yield chunk
 
         return StreamingHttpResponse(
             event_stream(),

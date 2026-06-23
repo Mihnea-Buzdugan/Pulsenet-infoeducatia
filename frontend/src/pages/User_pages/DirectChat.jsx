@@ -48,7 +48,7 @@ const DirectChat = ({ currentUser }) => {
 
             try {
                 const response = await fetch(
-                    `http://localhost:8000/accounts/direct_conversations/create/${id}/`,
+                    `https://localhost/accounts/direct_conversations/create/${id}/`,
                     {
                         method: 'POST',
                         headers: {
@@ -63,7 +63,7 @@ const DirectChat = ({ currentUser }) => {
                 if (response.ok) {
                     setConversationId(data.conversation_id);
 
-                    const keyRes = await fetch(`http://localhost:8000/accounts/message_keys/get/${id}/`, {
+                    const keyRes = await fetch(`https://localhost/accounts/message_keys/get/${id}/`, {
                         credentials: 'include',
                     });
 
@@ -73,7 +73,7 @@ const DirectChat = ({ currentUser }) => {
                     } else {
                         console.error("Message Key error: ", response.error);
                     }
-                    const myKeyRes = await fetch(`http://localhost:8000/accounts/message_keys/get/${currentUser.id}/`, {
+                    const myKeyRes = await fetch(`https://localhost/accounts/message_keys/get/${currentUser.id}/`, {
                         credentials: 'include'
                     });
                     if (myKeyRes.ok) {
@@ -123,7 +123,7 @@ const DirectChat = ({ currentUser }) => {
         if (!conversationId) return;
         const fetchHistory = async () => {
             try {
-                const response = await fetch(`http://localhost:8000/accounts/messages/history/direct/${conversationId}/`, {
+                const response = await fetch(`https://localhost/accounts/messages/history/direct/${conversationId}/`, {
                     credentials: 'include'
                 });
                 const data = await response.json();
@@ -143,7 +143,7 @@ const DirectChat = ({ currentUser }) => {
 
     useEffect(() => {
         if (!conversationId) return;
-        const wsUrl = `ws://localhost:8000/ws/chat/direct/${conversationId}/`;
+        const wsUrl = `wss://localhost/ws/chat/direct/${conversationId}/`;
         socketRef.current = new WebSocket(wsUrl);
         socketRef.current.onmessage = async (e) => {
             const data = JSON.parse(e.data);
@@ -243,7 +243,7 @@ const DirectChat = ({ currentUser }) => {
                     type="text"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
-                    placeholder="iMessage"
+                    placeholder="Message"
                     className={styles.inputField}
                 />
                 <button type="submit" className={styles.sendButton}>

@@ -27,9 +27,9 @@ SECRET_KEY = 'django-insecure-$+y&hjf1n-i6dqcg1_2x3x3%iux79)36hrtj-bvya9i6%rql^f
 
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
-
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
@@ -40,9 +40,9 @@ CORS_ALLOWED_ORIGINS = [
 
 
 CSRF_COOKIE_NAME = "csrftoken"
-CSRF_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_HTTPONLY = False
-CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = 'None'
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "https://localhost:5173",
@@ -50,9 +50,9 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 SESSION_COOKIE_NAME = "session"
-SESSION_COOKIE_SECURE = False
+SESSION_COOKIE_SECURE = True
 SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = 'None'
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
 # Application definition
@@ -94,7 +94,7 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 
-LOGIN_REDIRECT_URL = 'http://localhost:5173/home'
+LOGIN_REDIRECT_URL = 'https://localhost:5173/home'
 SITE_ID = 1
 
 
@@ -123,7 +123,7 @@ SOCIALACCOUNT_PROVIDERS = {
             'secret':os.environ.get('secret_Google'),
             'key': '',
         },
-    'REDIRECT_URI': 'http://localhost:8000/accounts/google/login/callback/',
+    'REDIRECT_URI': 'https://localhost/accounts/google/login/callback/',
     }
 }
 ACCOUNT_AUTHENTICATION_METHOD = "email"

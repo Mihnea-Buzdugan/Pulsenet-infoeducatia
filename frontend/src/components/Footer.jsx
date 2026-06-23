@@ -11,7 +11,7 @@ const Footer = () => {
                     &copy; 2026 PulseNet. Connecting neighbors, building stronger communities, and enabling real-time local support.
                 </p>
                 <p>
-                    Designed & Developed by Buzdugan Mihnea-Andrei & Covaliuc Lucian.
+                    Designed & Developed by Buzdugan Mihnea-Andrei.
                     {" "}Have questions or feedbacks?
                     <Link to="/contact" className={styles.link}> Contact us</Link>
                 </p>

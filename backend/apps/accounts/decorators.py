@@ -51,7 +51,7 @@ def check_hate_speech(view_func):
                 max_score = max(scores.values())
 
                 top_label = max(scores, key=scores.get)
-
+                print(scores)
                 if scores.get('identity_hate', 0) > 0.6 or scores.get('toxic', 0) > 0.75 or scores.get('severe_toxic', 0) > 0.5 or scores.get('threat', 0) > 0.7 or scores.get('insult', 0) > 0.8:
                     return JsonResponse({
                         "success": False,

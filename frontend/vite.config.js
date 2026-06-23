@@ -1,6 +1,7 @@
 import path from "path" // Importă modulul path din Node
 import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defineConfig } from 'vite'
+import fs from 'fs'
 
 export default defineConfig({
     plugins: [react()],
@@ -12,8 +13,9 @@ export default defineConfig({
     server: {
         host: true,
         port: 5173,
-        watch: {
-            usePolling: true,
+        https: {
+            key: fs.readFileSync('./certs/localhost-key.pem'),
+            cert: fs.readFileSync('./certs/localhost-cert.pem'),
         },
     },
 })

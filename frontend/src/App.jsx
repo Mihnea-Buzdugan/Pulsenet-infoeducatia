@@ -38,7 +38,7 @@ const NotificationHandler = ({ currentUser }) => {
     useEffect(() => {
         if (!currentUser?.id) return;
 
-        const wsUrl = `ws://localhost:8000/ws/notifications/`;
+        const wsUrl = `wss://localhost/ws/notifications/`;
         const socket = new WebSocket(wsUrl);
 
         socket.onmessage = (e) => {
@@ -391,7 +391,7 @@ function App() {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
     const fetchUser = () => {
-        fetch('http://localhost:8000/accounts/user/', { credentials: 'include' })
+        fetch('https://localhost/accounts/user/', { credentials: 'include' })
             .then(response => {
                 if (!response.ok) throw new Error("Unauthorized");
                 return response.json();
@@ -480,7 +480,6 @@ function App() {
                 <Routes>
                     <Route path="/login" element={<Login onLoginSuccess={fetchUser} />} />
                     <Route path="/signup" element={<SignUp />} />
-                    <Route path="/ai-chat" element={<AIChat />} />
 
                     <Route element={user ? <Outlet /> : <Navigate to="/login" replace />}>
                         <Route path="/" element={<Index user={user} />} />
@@ -503,6 +502,7 @@ function App() {
                         <Route path="/create-request" element={<CreateRequest />} />
                         <Route path="/request/:id" element={<RequestDetails />} />
                         <Route path="/offer/:requestId" element={<RequestOffer />} />
+                        <Route path="/ai-chat" element={<AIChat />} />
 
                         <Route path="/admin-page" element={<AdminRoute><Admin /></AdminRoute>} />
                     </Route>

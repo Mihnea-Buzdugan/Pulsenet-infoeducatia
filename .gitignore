@@ -5,6 +5,7 @@
 /backend/.env
 /backend/idea/
 /backend/staticfiles/
+/nginx/certs/
 .env
 **/__pycache__/
 *.pyc
