@@ -3,23 +3,22 @@ from . import views
 
 urlpatterns = [
     # Auth & Tokens
-    path('csrf-token/', views.csrf_token, name='csrf_token'),
-    path('user_login/', views.user_login, name='login'),
-    path('logout/', views.logout, name='logout'),
-    path('user/', views.user, name='user'),
-    path('signup/', views.sign_up, name='signup'),
-    path('google_login/', views.google_login, name='google_login'),
+    path('csrf-token/', views.CSRFTokenView.as_view(), name='csrf_token'),
+    path('user_login/', views.LoginView.as_view(), name='login'),
+    path('logout/', views.LogoutView.as_view(), name='logout'),
+    path('signup/', views.SignUpView.as_view(), name='signup'),
+    path('google_login/', views.GoogleLoginView.as_view(), name='google_login'),
 
     # User Profile Data
-    path('user/', views.user, name='user'),
-    path('profile/', views.profile, name='profile'),
-    path('update_profile/', views.update_profile, name='update_profile'),
-    path('update_location/', views.update_location, name='update_location'),
-    path('become_verified/', views.become_verified, name='become_verified'),
+    path('user/', views.UserView.as_view(), name='user'),
+    path('profile/', views.ProfileView.as_view(), name='profile'),
+    path('update_profile/', views.ProfileView.as_view(), name='update_profile'),
+    path('update_location/', views.UpdateLocationView.as_view(), name='update_location'),
+    path('become_verified/', views.BecomeVerifiedView.as_view(), name='become_verified'),
 
     # Profile Pictures
-    path('upload_profile_picture/', views.upload_profile_picture, name='upload_profile_picture'),
-    path('delete_profile_picture/', views.delete_profile_picture, name='delete_profile_picture'),
+    path('upload_profile_picture/', views.ProfilePictureView.as_view(), name='upload_profile_picture'),
+    path('delete_profile_picture/', views.ProfilePictureView.as_view(), name='delete_profile_picture'),
 
     # --- UNIFIED PULSE SYSTEM ---
     path('add_pulse/', views.add_pulse, name='add_pulse'),

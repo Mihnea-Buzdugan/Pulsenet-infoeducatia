@@ -14,6 +14,8 @@ from django.core.exceptions import ValidationError
 import json
 from django.utils import timezone
 from datetime import timedelta
+from datetime import time
+from django.utils.dateparse import parse_time
 from django.contrib.auth import get_user_model
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
 from google.auth.transport.requests import Request
@@ -41,210 +43,301 @@ def generate_password(length=12):
     alphabet = string.ascii_letters + string.digits + string.punctuation
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
+from rest_framework import status
+from rest_framework.parsers import MultiPartParser, FormParser
+from django.utils.decorators import method_decorator
 
-@ensure_csrf_cookie
-def csrf_token(request):
-    csrf_token = get_token(request)
-    return JsonResponse({'csrf_token': csrf_token})
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class CSRFTokenView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
 
 
-@csrf_protect
-def sign_up(request):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-        except json.JSONDecodeError:
-            return JsonResponse({'message': 'Invalid JSON data'}, status=400)
+    def get(self, request):
+        return Response({
+            "csrf_token": get_token(request)
+        })
 
-        email = data.get('email')
-        username = data.get('username')
-        password = data.get('password')
-        first_name = data.get('first_name')
-        last_name = data.get('last_name')
+
+class SignUpView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+
+
+    def post(self, request):
+        data = request.data
+
+        email = data.get("email")
+        username = data.get("username")
+        password = data.get("password")
+        first_name = data.get("first_name")
+        last_name = data.get("last_name")
 
         User = get_user_model()
 
         if User.objects.filter(email=email).exists():
-            return JsonResponse({'message': 'Email is already in use.'}, status=400)
+            return Response(
+                {"message": "Email is already in use."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if User.objects.filter(username=username).exists():
-            return JsonResponse({'message': 'Username is already in use.'}, status=400)
+            return Response(
+                {"message": "Username is already in use."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             user = User.objects.create_user(
                 email=email,
+                username=username,
                 password=password,
                 first_name=first_name,
                 last_name=last_name,
-                username=username,
                 is_private=False,
             )
         except ValidationError as e:
-            return JsonResponse({'message': str(e)}, status=400)
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        django_login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+        django_login(
+            request,
+            user,
+            backend="django.contrib.auth.backends.ModelBackend",
+        )
+
         request.session.set_expiry(3600 * 6)
 
-        return JsonResponse({
-            'message': 'User created and logged in successfully.',
-            'user': {
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'username': user.username,
-            }
-        }, status=201)
+        return Response(
+            {
+                "message": "User created and logged in successfully.",
+                "user": {
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "username": user.username,
+                },
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
-    return JsonResponse({'message': 'Method not allowed'}, status=405)
 
-@csrf_protect
-def user_login(request):
-    if request.method == 'POST':
-        csrf_token = get_token(request)
-        print("CSRF Token received:", csrf_token)
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+
+
+    def post(self, request):
+        email = request.data.get("email")
+        password = request.data.get("password")
+
+        if not email or not password:
+            return Response(
+                {"message": "Email and Password are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = authenticate(
+            request,
+            username=email,  # assuming your auth backend uses email as username
+            password=password,
+        )
+
+        if user is None:
+            return Response(
+                {"message": "Invalid credentials"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        django_login(
+            request,
+            user,
+            backend="django.contrib.auth.backends.ModelBackend",
+        )
+
+        request.session.set_expiry(3600 * 6)
+
+        return Response(
+            {
+                "message": "User login successful",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "is_superuser": user.is_superuser,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+
+
+class GoogleLoginView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+
+
+    def post(self, request):
+        google_client_id = os.environ.get("client_id_Google")
+
+        google_token = request.data.get("google_token")
+
+        if not google_token:
+            return Response(
+                {"message": "Invalid Google token"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            data = json.loads(request.body)
-            email = data.get('email')
-            password = data.get('password')
+            id_info = id_token.verify_oauth2_token(
+                google_token,
+                Request(),
+                google_client_id,
+            )
 
-            if not email or not password:
-                return JsonResponse({'message': 'Email and Password are required'}, status=400)
+            google_email = id_info.get("email")
+            full_given = id_info.get("given_name", "").strip()
 
-            user = authenticate(request, username=email, password=password)
+            parts = full_given.split()
 
-            if user is not None:
-                django_login(request, user, backend='django.contrib.auth.backends.ModelBackend')
-                request.session.set_expiry(3600 * 6)
-
-                user_data = {
-                    'id': user.id,
-                    'email': user.email,
-                    'first_name': user.first_name,
-                    'last_name': user.last_name,
-                    'is_superuser': user.is_superuser
-                }
-                return JsonResponse({'message': 'User login successful', 'user': user_data}, status=200)
+            if parts:
+                last_name = parts[0]
+                first_name = " ".join(parts[1:]) if len(parts) > 1 else ""
             else:
-                return JsonResponse({'message': 'Invalid credentials'}, status=400)
+                first_name = ""
+                last_name = ""
 
-        except json.JSONDecodeError:
-            return JsonResponse({'message': 'Invalid JSON'}, status=400)
+            User = get_user_model()
 
-    return JsonResponse({'message': 'Method Not Allowed'}, status=405)
+            user = User.objects.filter(email=google_email).first()
 
+            if not user:
+                user = User.objects.create_user(
+                    username=google_email,
+                    email=google_email,
+                    first_name=first_name,
+                    last_name=last_name,
+                    password=make_password(generate_password()),
+                    is_private=False,
+                )
 
-@csrf_protect
-def google_login(request):
-    GOOGLE_CLIENT_ID = os.environ.get('client_id_Google')
+            django_login(
+                request,
+                user,
+                backend="django.contrib.auth.backends.ModelBackend",
+            )
 
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
-        except json.decoder.JSONDecodeError:
-            return JsonResponse({'message': 'Invalid JSON'}, status=400)
+            request.session.set_expiry(6 * 3600)
 
-        google_token = data.get('google_token')
-        if google_token:
-            try:
+            return Response(
+                {
+                    "message": "User logged in with Google successfully",
+                    "user": {
+                        "email": user.email,
+                        "first_name": user.first_name,
+                        "last_name": user.last_name,
+                        "is_superuser": user.is_superuser,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
 
-                id_info = id_token.verify_oauth2_token(google_token, Request(), GOOGLE_CLIENT_ID)
-                google_email = id_info.get('email')
-                full_given = id_info.get('given_name', '').strip()
-                parts = full_given.split()
-                raw_password = generate_password()
-                hashed_password = make_password(raw_password)
-                User = get_user_model()
-                if parts:
-
-                    last_name = parts[0]
-
-                    first_name = ' '.join(parts[1:]) if len(parts) > 1 else ''
-                else:
-
-                    last_name = ''
-                    first_name = ''
-
-                if google_email:
-
-                    user = User.objects.filter(email=google_email).first()
-                    if not user:
-
-                        user = User.objects.create_user(
-                            username=google_email,
-                            email=google_email,
-                            first_name=first_name,
-                            last_name=last_name,
-                            password=hashed_password,
-                            is_private = False,
-                        )
-
-
-                    user.backend = 'django.contrib.auth.backends.ModelBackend'
-                    if user.is_superuser == False or user.is_superuser == True:
-
-                        django_login(request, user)
-                        request.session.set_expiry(6 * 3600)
-
-                        user_data = {
-                            'email': user.email,
-                            'first_name': user.first_name,
-                            'last_name': user.last_name,
-                            'is_superuser': user.is_superuser,
-                        }
-                        return JsonResponse({'message': 'User logged in with Google successfully', 'user': user_data}, status=200)
-                    else:
-                        return JsonResponse({'message': 'User is a superuser, cannot login with Google'}, status=400)
-            except ValueError as e:
-                return JsonResponse({'message': f'Invalid Google token: {str(e)}'}, status=400)
-
-        else:
-            return JsonResponse({'message': 'Invalid Google token'}, status=400)
-    else:
-        return JsonResponse({'message': 'Method not allowed'}, status=405)
+        except ValueError as e:
+            return Response(
+                {"message": f"Invalid Google token: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 
-@csrf_exempt
-def logout(request):
-    if request.method == "POST":
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
         django_logout(request)
-        return JsonResponse({'message': 'User logged out successfully'}, status=200)
-    else:
-        return JsonResponse({'message': 'Method not allowed'}, status=405)
+
+        return Response(
+            {"message": "User logged out successfully"},
+            status=status.HTTP_200_OK,
+        )
 
 
 
-
-@login_required
-def user(request):
-    if request.method == "GET":
-        user = request.user
-        return JsonResponse({'user':{
-            'id': user.id,
-            'email': user.email,
-            'username': user.username,
-            'firstName': user.first_name,
-            'lastName': user.last_name,
-            'is_superuser': user.is_superuser,
-            'profile_picture': user.profile_picture.url if user.profile_picture else None,
-            "is_banned": user.is_banned,
-            "banned_until": user.banned_until.isoformat() if user.banned_until else None,
-        }}, status=200)
-    else:
-        return JsonResponse({'message': 'Method not allowed'}, status=405)
+class UserView(APIView):
+    permission_classes = [IsAuthenticated]
 
 
-@login_required
-def profile(request):
-    if request.method == "GET":
+    def get(self, request):
         user = request.user
 
+        return Response(
+            {
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "username": user.username,
+                    "firstName": user.first_name,
+                    "lastName": user.last_name,
+                    "is_superuser": user.is_superuser,
+                    "profile_picture": (
+                        user.profile_picture.url
+                        if user.profile_picture
+                        else None
+                    ),
+                    "is_banned": user.is_banned,
+                    "banned_until": (
+                        user.banned_until.isoformat()
+                        if user.banned_until
+                        else None
+                    ),
+                }
+            },
+            status=status.HTTP_200_OK,
+        )
 
-        pulses = Pulse.objects.filter(user=user).prefetch_related('images')
-        pulses_data = []
-        for p in pulses:
-            pulses_data.append({
+
+def serialize_location(location):
+    return json.loads(location.geojson) if location else None
+
+
+def serialize_image_urls(request, images):
+    return [request.build_absolute_uri(img.image.url) for img in images]
+
+
+def parse_optional_time(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, time):
+        return value
+    parsed = parse_time(value)
+    if parsed is None:
+        raise ValidationError(f"Invalid time format: {value}")
+    return parsed
+
+
+class ProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+
+    def get(self, request):
+        user = request.user
+
+        pulses = Pulse.objects.filter(user=user).prefetch_related("images")
+        requests = UrgentRequest.objects.filter(user=user).prefetch_related("images")
+
+        pulses_data = [
+            {
                 "id": p.id,
                 "title": p.title,
                 "pulseType": p.pulse_type,
@@ -252,32 +345,33 @@ def profile(request):
                 "price": float(p.price),
                 "currencyType": p.currencyType,
                 "description": p.description,
-                "images": [request.build_absolute_uri(img.image.url) for img in p.images.all()],
+                "images": serialize_image_urls(request, p.images.all()),
                 "phone_number": p.phone_number,
-                "location": json.loads(p.location.geojson) if p.location else None,
+                "location": serialize_location(p.location),
                 "timestamp": p.created_at.strftime("%Y-%m-%d %H:%M"),
-            })
+            }
+            for p in pulses
+        ]
 
-        requests = UrgentRequest.objects.filter(user=user).prefetch_related('images')
-        requests_data = []
-        for req in requests:
-            requests_data.append({
+        requests_data = [
+            {
                 "id": req.id,
                 "title": req.title,
                 "description": req.description,
                 "category": req.category,
                 "price": float(req.max_price) if req.max_price is not None else None,
                 "currencyType": req.currencyType,
-                "images": [request.build_absolute_uri(img.image.url) for img in req.images.all()],
-                "location": json.loads(req.location.geojson) if req.location else None,
+                "images": serialize_image_urls(request, req.images.all()),
+                "location": serialize_location(req.location),
                 "timestamp": req.created_at.strftime("%Y-%m-%d %H:%M"),
-            })
-
+            }
+            for req in requests
+        ]
 
         total_posts = (
-            pulses.count() +
-            Alert.objects.filter(user=user).count() +
-            UrgentRequest.objects.filter(user=user).count()
+            pulses.count()
+            + Alert.objects.filter(user=user).count()
+            + UrgentRequest.objects.filter(user=user).count()
         )
 
         user_data = {
@@ -288,7 +382,7 @@ def profile(request):
             "username": user.username,
             "profilePicture": request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None,
             "biography": user.biography,
-            "location": json.loads(user.location.geojson) if user.location else None,
+            "location": serialize_location(user.location),
             "visibility_radius": user.visibility_radius,
             "quiet_hours_start": user.quiet_hours_start.strftime("%H:%M") if user.quiet_hours_start else None,
             "quiet_hours_end": user.quiet_hours_end.strftime("%H:%M") if user.quiet_hours_end else None,
@@ -304,208 +398,241 @@ def profile(request):
             "requests": requests_data,
         }
 
-        return JsonResponse({"user": user_data})
+        return Response({"user": user_data}, status=status.HTTP_200_OK)
 
-    return JsonResponse({"error": "Method not allowed"}, status=405)
+    def put(self, request):
+        try:
+            user = request.user
+            data = request.data
+
+            old_skills = list(user.skills) if user.skills else []
+
+            user.first_name = data.get("firstName", user.first_name)
+            user.last_name = data.get("lastName", user.last_name)
+            user.username = data.get("username", user.username)
+            user.email = data.get("email", user.email)
+            user.biography = data.get("biography", user.biography)
+            user.online_status = data.get("online_status", user.online_status)
+            user.visibility_radius = data.get("visibility_radius", user.visibility_radius)
+            user.is_private = data.get("is_private", user.is_private)
+            user.skills = data.get("skills", user.skills or [])
+
+            user.quiet_hours_start = parse_optional_time(data.get("quiet_hours_start"))
+            user.quiet_hours_end = parse_optional_time(data.get("quiet_hours_end"))
+
+            user.save()
+
+            if old_skills != user.skills:
+                update_user_embedding.delay(user.id)
+
+            pulses = Pulse.objects.filter(user=user).prefetch_related("images")
+            pulses_data = [
+                {
+                    "id": p.id,
+                    "title": p.title,
+                    "pulseType": p.pulse_type,
+                    "price": float(p.price),
+                    "currencyType": p.currencyType,
+                    "images": serialize_image_urls(request, p.images.all()),
+                }
+                for p in pulses
+            ]
+
+            return Response(
+                {
+                    "message": "Success",
+                    "user": {
+                        "id": user.id,
+                        "email": user.email,
+                        "firstName": user.first_name,
+                        "lastName": user.last_name,
+                        "username": user.username,
+                        "profilePicture": request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None,
+                        "biography": user.biography,
+                        "location": serialize_location(user.location),
+                        "visibility_radius": user.visibility_radius,
+                        "quiet_hours_start": user.quiet_hours_start.strftime("%H:%M") if user.quiet_hours_start else None,
+                        "quiet_hours_end": user.quiet_hours_end.strftime("%H:%M") if user.quiet_hours_end else None,
+                        "trustScore": user.trust_score,
+                        "trustLevel": user.trust_level,
+                        "isVerified": user.is_verified,
+                        "onlineStatus": user.online_status,
+                        "is_private": user.is_private,
+                        "skills": user.skills or [],
+                        "pulses": pulses_data,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except ValidationError as e:
+            errors = getattr(e, "message_dict", None) or getattr(e, "messages", None) or str(e)
+            return Response({"error": errors}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@login_required
-@require_http_methods(["PUT"])
-def become_verified(request):
-    try:
+class BecomeVerifiedView(APIView):
+    permission_classes = [IsAuthenticated]
+
+
+    def put(self, request):
+        try:
+            user = request.user
+
+            account_age = timezone.now() - user.date_joined
+
+            total_posts = (
+                Pulse.objects.filter(user=user).count()
+                + Alert.objects.filter(user=user).count()
+                + UrgentRequest.objects.filter(user=user).count()
+            )
+
+            if total_posts <= 15:
+                return Response(
+                    {
+                        "success": False,
+                        "error": "Not enough posts to become verified.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if user.trust_score < 200:
+                return Response(
+                    {
+                        "success": False,
+                        "error": "Trust level not high enough.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if account_age < timedelta(days=90):
+                return Response(
+                    {
+                        "success": False,
+                        "error": "Account is too new to become verified.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user.is_verified = True
+            user.save(update_fields=["is_verified"])
+
+            return Response(
+                {
+                    "success": True,
+                    "message": "You are now a verified neighbour!",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            return Response(
+                {
+                    "success": False,
+                    "error": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+
+class ProfilePictureView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
         user = request.user
 
-        account_age = timezone.now() - user.date_joined
+        if "profile_picture" not in request.FILES:
+            return Response(
+                {"error": "No file provided."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        total_posts = (
-                Pulse.objects.filter(user=user).count() +
-                Alert.objects.filter(user=user).count() +
-                UrgentRequest.objects.filter(user=user).count()
-        )
+        file = request.FILES["profile_picture"]
 
+        if not file.content_type.startswith("image/"):
+            return Response(
+                {"error": "File must be an image."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if total_posts <= 15:
-            return JsonResponse({"success": False, "error": "Not enough posts to become verified."}, status=400)
+        max_size = 20 * 1024 * 1024
+        if file.size > max_size:
+            return Response(
+                {"error": "Image must be smaller than 20MB."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if user.trust_score < 200:
-            return JsonResponse({"success": False, "error": "Trust level not high enough."}, status=400)
+        if user.profile_picture:
+            user.profile_picture.delete(save=False)
 
-
-        if not (account_age >= timedelta(days=90)):
-            return JsonResponse({"success": False, "error": "Account is too new to become verified."}, status=400)
-
-
-        user.is_verified = True
-        user.save(update_fields=["is_verified"])
-
-        return JsonResponse({"success": True, "message": "You are now a verified neighbour!"})
-
-    except Exception as e:
-        return JsonResponse({"success": False, "error": str(e)}, status=500)
-
-
-
-@login_required
-@require_http_methods(["PUT"])
-def update_profile(request):
-    try:
-
-        data = json.loads(request.body)
-        user = request.user
-
-        old_skills = list(user.skills) if user.skills else []
-
-        user.first_name = data.get('firstName', user.first_name)
-        user.last_name = data.get('lastName', user.last_name)
-        user.username = data.get('username', user.username)
-        user.email = data.get('email', user.email)
-        user.biography = data.get('biography', user.biography)
-        user.online_status = data.get("online_status", user.online_status)
-        user.quiet_hours_start = data.get("quiet_hours_start") or None
-        user.quiet_hours_end = data.get("quiet_hours_end") or None
-        user.visibility_radius = data.get('visibility_radius', user.visibility_radius)
-        user.is_private = data.get('is_private', user.is_private)
-        user.skills = data.get('skills', [])
-
+        user.profile_picture = file
         user.save()
 
-        if old_skills != user.skills:
-            update_user_embedding.delay(user.id)
-
-        pulses = Pulse.objects.filter(user=user).prefetch_related('images')
+        pulses = Pulse.objects.filter(user=user).prefetch_related("images")
         pulses_data = [
             {
                 "id": p.id,
                 "title": p.title,
                 "pulseType": p.pulse_type,
-                "price": float(p.price),
-                "currencyType": p.currencyType,
-                "images": [request.build_absolute_uri(img.image.url) for img in p.images.all()],
-            } for p in pulses
+                "images": [
+                    request.build_absolute_uri(img.image.url)
+                    for img in p.images.all()
+                ],
+            }
+            for p in pulses
         ]
 
-        return JsonResponse({
-            "message": "Success",
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "firstName": user.first_name,
-                "lastName": user.last_name,
-                "username": user.username,
-                "profilePicture": request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None,
-                "biography": user.biography,
-                "location": json.loads(user.location.geojson) if user.location else None,
-                "visibility_radius": user.visibility_radius,
-                "quiet_hours_start": user.quiet_hours_start,
-                "quiet_hours_end": user.quiet_hours_end,
-                "trustScore": user.trust_score,
-                "trustLevel": user.trust_level,
-                "isVerified": user.is_verified,
-                "onlineStatus": user.online_status,
-                "is_private": user.is_private,
-                "skills": user.skills or [],
-                "pulses": pulses_data,
-            }
-        }, status=200)
-
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON format"}, status=400)
-    except ValidationError as e:
-        errors = getattr(e, 'message_dict', None) or e.messages
-        return JsonResponse({"error": errors}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-@login_required
-@require_POST
-@csrf_protect
-def upload_profile_picture(request):
-    user = request.user
-
-    if "profile_picture" not in request.FILES:
-        return JsonResponse(
-            {"error": "No file provided."},
-            status=400
+        return Response(
+            {
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "firstName": user.first_name,
+                    "lastName": user.last_name,
+                    "username": user.username,
+                    "profilePicture": request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None,
+                    "biography": user.biography,
+                    "location": json.loads(user.location.geojson) if user.location else None,
+                    "visibility_radius": user.visibility_radius,
+                    "quiet_hours_start": user.quiet_hours_start,
+                    "quiet_hours_end": user.quiet_hours_end,
+                    "trustScore": user.trust_score,
+                    "trustLevel": user.trust_level,
+                    "isVerified": user.is_verified,
+                    "onlineStatus": user.online_status,
+                    "pulses": pulses_data,
+                }
+            },
+            status=status.HTTP_200_OK,
         )
 
-    file = request.FILES["profile_picture"]
+    def delete(self, request):
+        user = request.user
 
+        if not user.profile_picture:
+            return Response(
+                {"error": "No profile picture to delete."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    if not file.content_type.startswith("image/"):
-        return JsonResponse(
-            {"error": "File must be an image."},
-            status=400
-        )
-
-    max_size = 20 * 1024 * 1024
-    if file.size > max_size:
-        return JsonResponse(
-            {"error": "Image must be smaller than 20MB."},
-            status=400
-        )
-
-
-    if user.profile_picture:
         user.profile_picture.delete(save=False)
+        user.profile_picture = None
+        user.save()
 
-    user.profile_picture = file
-    user.save()
-
-    pulses = Pulse.objects.filter(user=user).prefetch_related('images')
-    pulses_data = [
-        {
-            "id": p.id,
-            "title": p.title,
-            "pulseType": p.pulse_type,
-            "images": [request.build_absolute_uri(img.image.url) for img in p.images.all()],
-        } for p in pulses
-    ]
-
-    return JsonResponse({
-        "user": {
-            "id": user.id,
-                "email": user.email,
-                "firstName": user.first_name,
-                "lastName": user.last_name,
-                "username": user.username,
-                "profilePicture": request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None,
-                "biography": user.biography,
-                "location": json.loads(user.location.geojson) if user.location else None,
-                "visibility_radius": user.visibility_radius,
-                "quiet_hours_start": user.quiet_hours_start,
-                "quiet_hours_end": user.quiet_hours_end,
-                "trustScore": user.trust_score,
-                "trustLevel": user.trust_level,
-                "isVerified": user.is_verified,
-                "onlineStatus": user.online_status,
-                "pulses": pulses_data,
-        }
-    })
-
-@login_required
-@require_POST
-@csrf_protect
-def delete_profile_picture(request):
-    user = request.user
-
-    if not user.profile_picture:
-        return JsonResponse(
-            {"error": "No profile picture to delete."},
-            status=400
+        return Response(
+            {
+                "message": "Profile picture deleted successfully.",
+                "user": {
+                    "id": user.id,
+                    "profilePicture": None,
+                },
+            },
+            status=status.HTTP_200_OK,
         )
-
-    user.profile_picture.delete(save=False)
-
-    user.profile_picture = None
-    user.save()
-
-    return JsonResponse({
-        "message": "Profile picture deleted successfully.",
-        "user": {
-            "id": user.id,
-            "profilePicture": None
-        }
-    })
 
 
 @login_required
@@ -695,34 +822,57 @@ def remove_pulse(request, pulse_id):
         )
 
 
-@csrf_protect
-@login_required
-@require_POST
-def update_location(request):
-    try:
-        data = json.loads(request.body)
-        lat = data.get("lat")
-        lng = data.get("lng")
+class UpdateLocationView(APIView):
+    permission_classes = [IsAuthenticated]
 
-        if lat is None or lng is None:
-            return JsonResponse(
-                {"success": False, "error": "lat/lng required"},
-                status=400
+
+    def post(self, request):
+        try:
+            lat = request.data.get("lat")
+            lng = request.data.get("lng")
+
+            if lat is None or lng is None:
+                return Response(
+                    {
+                        "success": False,
+                        "error": "lat/lng required",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            request.user.location = Point(
+                float(lng),
+                float(lat),
+                srid=4326,
             )
 
-        request.user.location = Point(float(lng), float(lat), srid=4326)
-        request.user.save(update_fields=["location"])
+            request.user.save(update_fields=["location"])
 
-        return JsonResponse({
-            "success": True,
-            "is_superuser": request.user.is_superuser
-        })
+            return Response(
+                {
+                    "success": True,
+                    "is_superuser": request.user.is_superuser,
+                },
+                status=status.HTTP_200_OK,
+            )
 
-    except Exception as e:
-        return JsonResponse(
-            {"success": False, "error": str(e)},
-            status=400
-        )
+        except (TypeError, ValueError):
+            return Response(
+                {
+                    "success": False,
+                    "error": "Invalid coordinates",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            return Response(
+                {
+                    "success": False,
+                    "error": str(e),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 def get_base_pulse_queryset(user):
