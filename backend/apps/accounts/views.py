@@ -48,6 +48,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.permissions import AllowAny
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.utils.decorators import method_decorator
 
@@ -635,147 +636,164 @@ class ProfilePictureView(APIView):
         )
 
 
-@login_required
-@require_POST
-@csrf_protect
-@check_hate_speech
-def add_pulse(request):
-    try:
-        data = request.POST
+@method_decorator(csrf_protect, name="dispatch")
+@method_decorator(check_hate_speech, name="dispatch")
+class AddPulseAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["post"]
 
-        should_flag = getattr(request, 'needs_review', False)
-        ai_score = getattr(request, 'toxicity_score', 0.0)
+    def post(self, request, *args, **kwargs):
+        try:
+            data = request.data
 
-        lat = data.get('lat')
-        lng = data.get('lng')
-        location_point = None
-        if lat and lng:
-            location_point = Point(float(lng), float(lat), srid=4326)
+            should_flag = getattr(request, "needs_review", False)
+            ai_score = getattr(request, "toxicity_score", 0.0)
 
-        trust_required = False
-        price = data.get('price', 0)
-        if int(price) > 1000:
-            trust_required = True
+            lat = data.get("lat")
+            lng = data.get("lng")
+            location_point = None
+            if lat and lng:
+                location_point = Point(float(lng), float(lat), srid=4326)
 
-        pulse = Pulse.objects.create(
-            user=request.user,
-            title=data.get('title'),
-            description=data.get('description', ''),
-            category=data.get('category', ''),
-            pulse_type=data.get('pulse_type'),
-            price=price,
-            trust_required=trust_required,
-            currencyType=data.get('currencyType', 'RON'),
-            phone_number=data.get('phone_number', ''),
-            location=location_point,
-            is_available=data.get('is_available', 'true').lower() == 'true',
+            price = data.get("price", 0)
+            trust_required = int(price) > 1000
 
-            is_flagged=should_flag,
-            is_approved=not should_flag,
-            toxicity_score=ai_score,
-        )
-        if pulse.location:
-            reverse_geocode_location.delay("Pulse", pulse.id)
+            pulse = Pulse.objects.create(
+                user=request.user,
+                title=data.get("title"),
+                description=data.get("description", ""),
+                category=data.get("category", ""),
+                pulse_type=data.get("pulse_type"),
+                price=price,
+                trust_required=trust_required,
+                currencyType=data.get("currencyType", "RON"),
+                phone_number=data.get("phone_number", ""),
+                location=location_point,
+                is_available=str(data.get("is_available", "true")).lower() == "true",
+                is_flagged=should_flag,
+                is_approved=not should_flag,
+                toxicity_score=ai_score,
+            )
 
+            if pulse.location:
+                reverse_geocode_location.delay("Pulse", pulse.id)
 
-        images = request.FILES.getlist('images')
-        for img in images:
-            PulseImage.objects.create(pulse=pulse, image=img)
+            images = request.FILES.getlist("images")
+            for img in images:
+                PulseImage.objects.create(pulse=pulse, image=img)
 
-        first_image = pulse.images.first()
-        image_url = request.build_absolute_uri(first_image.image.url) if first_image else None
+            first_image = pulse.images.first()
+            image_url = request.build_absolute_uri(first_image.image.url) if first_image else None
 
-        broadcast_payload = {
-            "id": pulse.id,
-            "type": pulse.pulse_type,
-            "user": request.user.username,
-            "title": pulse.title,
-            "price": float(pulse.price),
-            "pulse_type": pulse.pulse_type,
-            "description": pulse.description,
-            "popularity_score": pulse.popularity_score if hasattr(pulse, 'popularity_score') else 0,
-            "total_reviews": pulse.total_reviews if hasattr(pulse, 'total_reviews') else 0,
-            "currency": pulse.currencyType,
-            "timestamp": pulse.created_at.isoformat(),
-            "distance": None,
-            "location": json.loads(pulse.location.geojson) if pulse.location else None,
-            "image": image_url,
-        }
-
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            "pulses_feed",
-            {"type": "pulse.message", "data": broadcast_payload}
-        )
-
-        update_user_trust_score_task.delay(request.user.id)
-
-        return JsonResponse({
-            "success": True,
-            "pulse": {
+            broadcast_payload = {
                 "id": pulse.id,
+                "type": pulse.pulse_type,
+                "user": request.user.username,
                 "title": pulse.title,
-                "pulseType": pulse.pulse_type,
+                "price": float(pulse.price),
+                "pulse_type": pulse.pulse_type,
+                "description": pulse.description,
+                "popularity_score": getattr(pulse, "popularity_score", 0),
+                "total_reviews": getattr(pulse, "total_reviews", 0),
+                "currency": pulse.currencyType,
+                "timestamp": pulse.created_at.isoformat(),
+                "distance": None,
                 "location": json.loads(pulse.location.geojson) if pulse.location else None,
-                "images": [request.build_absolute_uri(i.image.url) for i in pulse.images.all()]
+                "image": image_url,
             }
-        }, status=201)
 
-    except Exception as e:
-        return JsonResponse({"success": False, "error": str(e)}, status=400)
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                "pulses_feed",
+                {"type": "pulse.message", "data": broadcast_payload}
+            )
+
+            update_user_trust_score_task.delay(request.user.id)
+
+            return Response(
+                {
+                    "success": True,
+                    "pulse": {
+                        "id": pulse.id,
+                        "title": pulse.title,
+                        "pulseType": pulse.pulse_type,
+                        "location": json.loads(pulse.location.geojson) if pulse.location else None,
+                        "images": [request.build_absolute_uri(i.image.url) for i in pulse.images.all()],
+                    },
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        except Exception as e:
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 
-@login_required
-@require_http_methods(["POST"])
-def update_pulse(request, pulse_id):
-    try:
+class PulseDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def patch(self, request, pulse_id):
         pulse = get_object_or_404(Pulse, id=pulse_id)
-        if pulse.user != request.user:
-            return JsonResponse({"error": "Permission denied"}, status=403)
 
-        if request.content_type.startswith("application/json"):
-            data = json.loads(request.body or "{}")
-        else:
-            data = request.POST
+        if pulse.user != request.user:
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        data = request.data
+
         pulse.title = data.get("title", pulse.title)
-        pulse.pulse_type = data.get("category", pulse.pulse_type)
-        pulse.price = data.get("price", pulse.price)
+        pulse.pulse_type = data.get("pulseType", pulse.pulse_type)
         pulse.currencyType = data.get("currencyType", pulse.currencyType)
         pulse.description = data.get("description", pulse.description)
         pulse.phone_number = data.get("phone_number", pulse.phone_number)
 
+        # Safely coerce price
+        if "price" in data:
+            try:
+                pulse.price = float(data["price"]) if data["price"] not in (None, "") else None
+            except (TypeError, ValueError):
+                return Response({"error": "Invalid price value"}, status=status.HTTP_400_BAD_REQUEST)
+
         location_changed = False
-        loc = data.get("location") if hasattr(data, "get") else None
+        loc = data.get("location")
+
         if loc:
+            if isinstance(loc, str):
+                import json
+                try:
+                    loc = json.loads(loc)
+                except json.JSONDecodeError:
+                    return Response({"error": "Invalid location JSON"}, status=status.HTTP_400_BAD_REQUEST)
             coords = loc.get("coordinates")
             if coords and len(coords) == 2:
                 new_point = Point(coords[0], coords[1], srid=4326)
                 if pulse.location != new_point:
                     pulse.location = new_point
                     location_changed = True
-        elif loc is None and "location" in data:
+        elif "location" in data and not loc:
             if pulse.location is not None:
                 pulse.location = None
                 pulse.address = "Global / Online"
-                location_changed = False
 
-        pulse.full_clean()
-        pulse.save()
+        try:
+            pulse.save()
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         address_status = pulse.address
         if location_changed and pulse.location:
             reverse_geocode_location.delay("Pulse", pulse.id)
             address_status = "Changing the address..."
 
-        removed_images = request.POST.getlist("removed_images")
-        if removed_images:
-            for url in removed_images:
-                filename = url.split("/")[-1]
-                pulse.images.filter(image__icontains=filename).delete()
+        removed_images = request.data.getlist("removed_images") if hasattr(request.data, "getlist") else []
+        for url in removed_images:
+            filename = url.split("/")[-1]
+            pulse.images.filter(image__icontains=filename).delete()
 
-        uploaded_files = request.FILES.getlist("images")
-        for img in uploaded_files:
+        for img in request.FILES.getlist("images"):
             pulse.images.create(image=img)
 
         pulse_data = {
@@ -790,36 +808,17 @@ def update_pulse(request, pulse_id):
             "address": address_status,
             "location": {
                 "type": "Point",
-                "coordinates": [pulse.location.x, pulse.location.y]
+                "coordinates": [pulse.location.x, pulse.location.y],
             } if pulse.location else None,
             "images": [request.build_absolute_uri(img.image.url) for img in pulse.images.all()],
         }
 
-        return JsonResponse({"message": "Pulse updated", "pulse": pulse_data}, status=200)
+        return Response({"message": "Pulse updated", "pulse": pulse_data}, status=status.HTTP_200_OK)
 
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-    except ValidationError as e:
-        errors = getattr(e, "message_dict", None) or e.messages
-        return JsonResponse({"error": errors}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-
-@login_required
-@require_http_methods(["DELETE"])
-def remove_pulse(request, pulse_id):
-    try:
-        pulse = Pulse.objects.get(id=pulse_id, user=request.user)
+    def delete(self, request, pulse_id):
+        pulse = get_object_or_404(Pulse, id=pulse_id, user=request.user)
         pulse.delete()
-        return JsonResponse({"success": True})
-    except Pulse.DoesNotExist:
-        return JsonResponse({"success": False, "error": "Pulsul nu a fost găsit"}, status=404)
-    except Exception as e:
-        return JsonResponse(
-            {"success": False, "error": str(e)},
-            status=400
-        )
+        return Response({"success": True}, status=status.HTTP_200_OK)
 
 
 class UpdateLocationView(APIView):
@@ -885,383 +884,470 @@ def get_base_pulse_queryset(user):
     return qs
 
 
-@require_GET
-def list_all_pulses(request):
-    page = int(request.GET.get("page", 1))
-    page_size = 15
+class PulseList(APIView):
+    permission_classes = []  # public endpoint
 
-    search = request.GET.get("search", "")
-    pulse_type = request.GET.get("pulse_type", "")
-    min_price = request.GET.get("min_price")
-    max_price = request.GET.get("max_price")
+    def get(self, request):
+        page = int(request.query_params.get("page", 1))
+        page_size = 15
 
-    qs = (
-        Pulse.objects
-        .select_related("user")
-        .prefetch_related("images")
-        .order_by("-created_at")
-    )
+        search = request.query_params.get("search", "")
+        pulse_type = request.query_params.get("pulse_type", "")
+        min_price = request.query_params.get("min_price")
+        max_price = request.query_params.get("max_price")
 
-    if search:
-        qs = qs.filter(
-            Q(title__icontains=search) |
-            Q(description__icontains=search)
-        )
-
-    if pulse_type:
-        qs = qs.filter(pulse_type=pulse_type)
-
-    if min_price:
-        qs = qs.filter(price__gte=min_price)
-
-    if max_price:
-        qs = qs.filter(price__lte=max_price)
-
-    total_count = qs.count()
-    total_pages = ceil(total_count / page_size)
-
-    start = (page - 1) * page_size
-    end = start + page_size
-
-    pulses = qs[start:end]
-
-    results = []
-    for pulse in pulses:
-        images_qs = [
-            request.build_absolute_uri(img.image.url)
-            for img in pulse.images.all()
-            if img.image
-        ]
-
-        images = images_qs if images_qs else None
-
-        location_data = None
-        if pulse.location:
-            location_data = {
-                "lat": pulse.location.y,
-                "lng": pulse.location.x,
-            }
-
-        results.append({
-            "id": pulse.id,
-            "user": pulse.user.username,
-            "title": pulse.title,
-            "description": pulse.description,
-            "pulse_type": pulse.pulse_type,
-            "category": pulse.pulse_type,
-            "currencyType": pulse.currencyType,
-            "price": str(pulse.price) if pulse.price else None,
-            "location": location_data,
-            "address": pulse.address,
-            "created_at": pulse.created_at.isoformat() if pulse.created_at else None,
-            "images": images,
-        })
-
-    return JsonResponse({
-        "results": results,
-        "page": page,
-        "total_pages": total_pages,
-        "has_next": page < total_pages,
-        "has_previous": page > 1,
-    })
-
-
-@csrf_protect
-@login_required
-@require_http_methods(["GET"])
-def get_latest_pulses(request):
-    page_number = request.GET.get('page', 1)
-    per_page = 15
-
-    lat = request.GET.get("lat")
-    lng = request.GET.get("lng")
-
-    if lat and lng:
-        ref_location = Point(float(lng), float(lat), srid=4326)
-        radius_km = request.user.visibility_radius or 1
-        pulses = (
-            Pulse.objects.select_related("user").prefetch_related("images")
-            .filter(location__dwithin=(ref_location, radius_km / 111.32))
-            .order_by("-created_at")
-        )
-    else:
-        pulses = get_base_pulse_queryset(request.user).order_by("-created_at")
-
-    paginator = Paginator(pulses, per_page)
-    page_obj = paginator.get_page(page_number)
-
-    final_data = []
-    for p in page_obj:
-        images = list(p.images.all())
-        image_url = request.build_absolute_uri(images[0].image.url) if images else None
-
-        final_data.append({
-            "id": p.id,
-            "type": p.pulse_type,
-            "user": p.user.username,
-            "user_avatar": request.build_absolute_uri(p.user.profile_picture.url) if p.user.profile_picture else None,
-            "name": p.title,
-            "description": p.description,
-            "popularity_score": p.popularity_score,
-            "total_reviews": p.total_reviews,
-            "price": float(p.price),
-            "pulse_type": p.pulse_type,
-            "currency": p.currencyType,
-            "timestamp": p.created_at.strftime("%Y-%m-%d %H:%M"),
-            "image": image_url,
-        })
-
-    return JsonResponse({
-        "success": True,
-        "pulses": final_data,
-        "has_next": page_obj.has_next(),
-    })
-
-
-@csrf_protect
-@login_required
-@require_http_methods(["GET"])
-def get_nearest_pulses(request):
-
-    lat = request.GET.get("lat")
-    lng = request.GET.get("lng")
-
-    if lat and lng:
-        ref_location = Point(float(lng), float(lat), srid=4326)
-    else:
-        ref_location = request.user.location
-
-    if not ref_location:
-        return JsonResponse({"success": False, "error": "Location required"}, status=400)
-
-    radius_km = request.user.visibility_radius
-    user = request.user
-    pulses = (
-        Pulse.objects
-        .exclude(user=user)
-        .filter(location__dwithin=(ref_location, radius_km / 111.32))
-        .select_related("user")
-        .prefetch_related("images")
-        .annotate(distance=GisDistance("location", ref_location))
-        .order_by("distance")[:10]
-    )
-
-    data = []
-    for p in pulses:
-        images = list(p.images.all())
-        image_url = request.build_absolute_uri(images[0].image.url) if images else None
-
-        data.append({
-            "id": p.id,
-            "type": p.pulse_type,
-            "user": p.user.username,
-            "name": p.title,
-            "price": float(p.price),
-            "pulse_type": p.pulse_type,
-            "description": p.description,
-            "popularity_score": p.popularity_score,
-            "total_reviews": p.total_reviews,
-            "currency": p.currencyType,
-            "timestamp": p.created_at.isoformat(),
-            "distance": round(p.distance.km, 2),
-            "lat": p.location.y if p.location else None,
-            "lng": p.location.x if p.location else None,
-            "image": image_url,
-        })
-
-    return JsonResponse({
-        "success": True,
-        "pulses": data
-    })
-
-
-@csrf_protect
-@login_required
-@require_http_methods(["GET"])
-def get_best_pulses(request):
-    page_number = request.GET.get('page', 1)
-    per_page = 15
-
-    pulses = get_base_pulse_queryset(request.user).order_by("-popularity_score")
-
-    paginator = Paginator(pulses, per_page)
-    page_obj = paginator.get_page(page_number)
-
-    final_data = []
-    for p in page_obj:
-        images = list(p.images.all())
-        image_url = request.build_absolute_uri(images[0].image.url) if images else None
-
-        final_data.append({
-            "id": p.id,
-            "type": p.pulse_type,
-            "user": p.user.username,
-            "user_avatar": request.build_absolute_uri(p.user.profile_picture.url) if p.user.profile_picture else None,
-            "name": p.title,
-            "price": float(p.price),
-            "pulse_type": p.pulse_type,
-            "description": p.description,
-            "popularity_score": p.popularity_score,
-            "total_reviews": p.total_reviews,
-            "currency": p.currencyType,
-            "timestamp": p.created_at.strftime("%Y-%m-%d %H:%M"),
-            "image": image_url,
-        })
-
-    return JsonResponse({
-        "success": True,
-        "pulses": final_data,
-        "has_next": page_obj.has_next(),
-    })
-
-@csrf_protect
-@login_required
-@require_http_methods(["GET"])
-def get_favorite_pulses(request):
-    page_number = request.GET.get("page", 1)
-    per_page = request.GET.get("per_page", 15)
-
-    search = request.GET.get("search", "").strip()
-    pulse_type = request.GET.get("type", "all")
-    sort = request.GET.get("sort", "recent")
-
-    try:
-        favorite_pulse_ids = FavoritePulse.objects.filter(
-            user=request.user
-        ).values_list("pulse_id", flat=True)
-
-        pulses = Pulse.objects.filter(id__in=favorite_pulse_ids).select_related("user").prefetch_related("images")
-
-
-        if search:
-            pulses = pulses.filter(title__icontains=search)
-        if pulse_type != "all":
-            pulses = pulses.filter(pulse_type=pulse_type)
-
-        if sort == "price_asc":
-            pulses = pulses.order_by("price")
-        elif sort == "price_desc":
-            pulses = pulses.order_by("-price")
-        else:
-            pulses = pulses.order_by("-created_at")
-
-        paginator = Paginator(pulses, per_page)
-        page_obj = paginator.get_page(page_number)
-
-        final_data = []
-        for p in page_obj:
-            final_data.append({
-                "id": p.id,
-                "type": p.pulse_type,
-                "user": p.user.username,
-                "user_avatar": request.build_absolute_uri(p.user.profile_picture.url)
-                if p.user.profile_picture else None,
-                "name": p.title,
-                "price": float(p.price),
-                "currency": p.currencyType,
-                "timestamp": p.created_at.strftime("%Y-%m-%d %H:%M"),
-                "image": request.build_absolute_uri(p.images.first().image.url)
-                if p.images.exists() else None,
-                "is_favorite": True
-            })
-
-        return JsonResponse({
-            "success": True,
-            "pulses": final_data,
-            "has_next": page_obj.has_next(),
-            "next_page": page_obj.next_page_number() if page_obj.has_next() else None
-        })
-
-    except Exception as e:
-        return JsonResponse({
-            "success": False,
-            "error": str(e)
-        }, status=400)
-
-
-@csrf_exempt
-@login_required
-@require_http_methods(["GET"])
-def get_pulse_by_id(request, pulse_id):
-    try:
-        pulse = (
+        qs = (
             Pulse.objects
             .select_related("user")
-            .prefetch_related("images", "rentals")
-            .get(id=pulse_id)
+            .prefetch_related("images")
+            .order_by("-created_at")
         )
 
-        coords = list(pulse.location.coords) if pulse.location else [27.5766, 47.1585]
+        if search:
+            qs = qs.filter(
+                Q(title__icontains=search)
+                | Q(description__icontains=search)
+            )
 
-        images = [
-            request.build_absolute_uri(img.image.url)
-            for img in pulse.images.all()
-        ]
+        if pulse_type:
+            qs = qs.filter(pulse_type=pulse_type)
 
-        unavailable_ranges = [
+        if min_price:
+            qs = qs.filter(price__gte=min_price)
+
+        if max_price:
+            qs = qs.filter(price__lte=max_price)
+
+        total_count = qs.count()
+        total_pages = ceil(total_count / page_size) if total_count else 1
+
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        pulses = qs[start:end]
+
+        results = []
+
+        for pulse in pulses:
+            images = [
+                request.build_absolute_uri(img.image.url)
+                for img in pulse.images.all()
+                if img.image
+            ]
+
+            location_data = None
+
+            if pulse.location:
+                location_data = {
+                    "lat": pulse.location.y,
+                    "lng": pulse.location.x,
+                }
+
+            results.append(
+                {
+                    "id": pulse.id,
+                    "user": pulse.user.username,
+                    "title": pulse.title,
+                    "description": pulse.description,
+                    "pulse_type": pulse.pulse_type,
+                    "category": pulse.pulse_type,
+                    "currencyType": pulse.currencyType,
+                    "price": float(pulse.price)
+                    if pulse.price is not None
+                    else None,
+                    "location": location_data,
+                    "address": pulse.address,
+                    "created_at": (
+                        pulse.created_at.isoformat()
+                        if pulse.created_at
+                        else None
+                    ),
+                    "images": images or None,
+                }
+            )
+
+        return Response(
             {
-                "start": rental.start_date.isoformat(),
-                "end": rental.end_date.isoformat(),
-                "status": rental.status,
-                "renter_id": getattr(rental, "renter_id", None),
-            }
-            for rental in pulse.rentals.filter(status__in=["confirmed"])
-        ]
+                "results": results,
+                "page": page,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_previous": page > 1,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+
+class NearestPulses(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        lat = request.query_params.get("lat")
+        lng = request.query_params.get("lng")
 
         try:
-            user_rating_obj = PulseRating.objects.get(pulse=pulse, user=request.user)
-            user_rating = user_rating_obj.rating
-        except PulseRating.DoesNotExist:
-            user_rating = None
+            if lat and lng:
+                ref_location = Point(
+                    float(lng),
+                    float(lat),
+                    srid=4326,
+                )
+            else:
+                ref_location = request.user.location
 
-        avg_rating = PulseRating.objects.filter(pulse=pulse).aggregate(avg=Avg("rating"))["avg"]
+            if not ref_location:
+                return Response(
+                    {
+                        "success": False,
+                        "error": "Location required",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        if avg_rating is not None:
-            avg_rating = round(avg_rating, 1)
-        else:
-            avg_rating = "N/A"
-        has_trust_access = request.user.is_verified and request.user.trust_score > 200
+            radius_km = request.user.visibility_radius
 
-        data = {
-            "id": pulse.id,
-            "type": pulse.pulse_type,
-            "user": pulse.user.username,
-            "user_id": pulse.user.id,
-            "user_avatar": request.build_absolute_uri(pulse.user.profile_picture.url) if pulse.user.profile_picture else None,
-            "trustLevel": pulse.user.trust_level,
-            "trustRequired": pulse.trust_required,
-            "name": pulse.title,
-            "description": pulse.description,
-            "price": float(pulse.price),
-            "currency": pulse.currencyType,
-            "location": coords,
-            "address": pulse.address,
-            "timestamp": pulse.created_at.isoformat() if pulse.created_at else None,
-            "is_favorite": FavoritePulse.objects.filter(pulse=pulse, user=request.user).exists(),
-            "images": images,
-            "user_rating": user_rating,
-            "reserved_periods": unavailable_ranges,
-            "unavailable_ranges": unavailable_ranges,
-            "has_trust_access": has_trust_access,
-            "rating": avg_rating,
-        }
+            pulses = (
+                Pulse.objects
+                .exclude(user=request.user)
+                .filter(
+                    location__dwithin=(
+                        ref_location,
+                        radius_km / 111.32,
+                    )
+                )
+                .select_related("user")
+                .prefetch_related("images")
+                .annotate(
+                    distance=GisDistance(
+                        "location",
+                        ref_location,
+                    )
+                )
+                .order_by("distance")[:10]
+            )
 
-        return JsonResponse({
-            "success": True,
-            "pulse": data
-        })
+            data = []
 
-    except Pulse.DoesNotExist:
-        return JsonResponse({
-            "success": False,
-            "error": "Pulse not found"
-        }, status=404)
+            for pulse in pulses:
+                images = list(pulse.images.all())
 
-    except Exception as e:
-        return JsonResponse({
-            "success": False,
-            "error": str(e)
-        }, status=400)
+                image_url = (
+                    request.build_absolute_uri(
+                        images[0].image.url
+                    )
+                    if images
+                    else None
+                )
+
+                data.append(
+                    {
+                        "id": pulse.id,
+                        "type": pulse.pulse_type,
+                        "user": pulse.user.username,
+                        "name": pulse.title,
+                        "price": (
+                            float(pulse.price)
+                            if pulse.price is not None
+                            else None
+                        ),
+                        "pulse_type": pulse.pulse_type,
+                        "description": pulse.description,
+                        "popularity_score": pulse.popularity_score,
+                        "total_reviews": pulse.total_reviews,
+                        "currency": pulse.currencyType,
+                        "timestamp": (
+                            pulse.created_at.isoformat()
+                            if pulse.created_at
+                            else None
+                        ),
+                        "distance": round(
+                            pulse.distance.km,
+                            2,
+                        ),
+                        "lat": (
+                            pulse.location.y
+                            if pulse.location
+                            else None
+                        ),
+                        "lng": (
+                            pulse.location.x
+                            if pulse.location
+                            else None
+                        ),
+                        "image": image_url,
+                    }
+                )
+
+            return Response(
+                {
+                    "success": True,
+                    "pulses": data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except (TypeError, ValueError):
+            return Response(
+                {
+                    "success": False,
+                    "error": "Invalid coordinates",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            return Response(
+                {
+                    "success": False,
+                    "error": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+class FavoritePulses(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        page_number = request.query_params.get("page", 1)
+        per_page = request.query_params.get("per_page", 15)
+
+        search = request.query_params.get("search", "").strip()
+        pulse_type = request.query_params.get("type", "all")
+        sort = request.query_params.get("sort", "recent")
+
+        try:
+            favorite_pulse_ids = (
+                FavoritePulse.objects
+                .filter(user=request.user)
+                .values_list("pulse_id", flat=True)
+            )
+
+            pulses = (
+                Pulse.objects
+                .filter(id__in=favorite_pulse_ids)
+                .select_related("user")
+                .prefetch_related("images")
+            )
+
+            if search:
+                pulses = pulses.filter(title__icontains=search)
+
+            if pulse_type != "all":
+                pulses = pulses.filter(pulse_type=pulse_type)
+
+            if sort == "price_asc":
+                pulses = pulses.order_by("price")
+            elif sort == "price_desc":
+                pulses = pulses.order_by("-price")
+            else:
+                pulses = pulses.order_by("-created_at")
+
+            paginator = Paginator(pulses, int(per_page))
+            page_obj = paginator.get_page(page_number)
+
+            final_data = []
+
+            for pulse in page_obj:
+                first_image = pulse.images.first()
+
+                final_data.append(
+                    {
+                        "id": pulse.id,
+                        "type": pulse.pulse_type,
+                        "user": pulse.user.username,
+                        "user_avatar": (
+                            request.build_absolute_uri(
+                                pulse.user.profile_picture.url
+                            )
+                            if pulse.user.profile_picture
+                            else None
+                        ),
+                        "name": pulse.title,
+                        "price": (
+                            float(pulse.price)
+                            if pulse.price is not None
+                            else None
+                        ),
+                        "currency": pulse.currencyType,
+                        "timestamp": pulse.created_at.strftime(
+                            "%Y-%m-%d %H:%M"
+                        ),
+                        "image": (
+                            request.build_absolute_uri(
+                                first_image.image.url
+                            )
+                            if first_image
+                            else None
+                        ),
+                        "is_favorite": True,
+                    }
+                )
+
+            return Response(
+                {
+                    "success": True,
+                    "pulses": final_data,
+                    "has_next": page_obj.has_next(),
+                    "next_page": (
+                        page_obj.next_page_number()
+                        if page_obj.has_next()
+                        else None
+                    ),
+                    "current_page": page_obj.number,
+                    "total_pages": paginator.num_pages,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            return Response(
+                {
+                    "success": False,
+                    "error": str(e),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class PulseDetailRetrieve(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pulse_id):
+        try:
+            pulse = (
+                Pulse.objects
+                .select_related("user")
+                .prefetch_related("images", "rentals")
+                .get(id=pulse_id)
+            )
+
+            coords = (
+                list(pulse.location.coords)
+                if pulse.location
+                else [27.5766, 47.1585]
+            )
+
+            images = [
+                request.build_absolute_uri(img.image.url)
+                for img in pulse.images.all()
+                if img.image
+            ]
+
+            unavailable_ranges = [
+                {
+                    "start": rental.start_date.isoformat(),
+                    "end": rental.end_date.isoformat(),
+                    "status": rental.status,
+                    "renter_id": getattr(
+                        rental,
+                        "renter_id",
+                        None,
+                    ),
+                }
+                for rental in pulse.rentals.filter(
+                    status="confirmed"
+                )
+            ]
+
+            user_rating = (
+                PulseRating.objects
+                .filter(
+                    pulse=pulse,
+                    user=request.user,
+                )
+                .values_list("rating", flat=True)
+                .first()
+            )
+
+            avg_rating = (
+                PulseRating.objects
+                .filter(pulse=pulse)
+                .aggregate(avg=Avg("rating"))
+                .get("avg")
+            )
+
+            avg_rating = (
+                round(avg_rating, 1)
+                if avg_rating is not None
+                else "N/A"
+            )
+
+            has_trust_access = (
+                request.user.is_verified
+                and request.user.trust_score > 200
+            )
+
+            data = {
+                "id": pulse.id,
+                "type": pulse.pulse_type,
+                "user": pulse.user.username,
+                "user_id": pulse.user.id,
+                "user_avatar": (
+                    request.build_absolute_uri(
+                        pulse.user.profile_picture.url
+                    )
+                    if pulse.user.profile_picture
+                    else None
+                ),
+                "trustLevel": pulse.user.trust_level,
+                "trustRequired": pulse.trust_required,
+                "name": pulse.title,
+                "description": pulse.description,
+                "price": (
+                    float(pulse.price)
+                    if pulse.price is not None
+                    else None
+                ),
+                "currency": pulse.currencyType,
+                "location": coords,
+                "address": pulse.address,
+                "timestamp": (
+                    pulse.created_at.isoformat()
+                    if pulse.created_at
+                    else None
+                ),
+                "is_favorite": (
+                    FavoritePulse.objects
+                    .filter(
+                        pulse=pulse,
+                        user=request.user,
+                    )
+                    .exists()
+                ),
+                "images": images,
+                "user_rating": user_rating,
+                "reserved_periods": unavailable_ranges,
+                "unavailable_ranges": unavailable_ranges,
+                "has_trust_access": has_trust_access,
+                "rating": avg_rating,
+            }
+
+            return Response(
+                {
+                    "success": True,
+                    "pulse": data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Pulse.DoesNotExist:
+            return Response(
+                {
+                    "success": False,
+                    "error": "Pulse not found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        except Exception as e:
+            return Response(
+                {
+                    "success": False,
+                    "error": str(e),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 @login_required

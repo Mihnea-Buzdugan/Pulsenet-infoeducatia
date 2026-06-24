@@ -690,7 +690,7 @@ export default function Profile() {
             const res = await fetch(
                 `https://localhost/accounts/update_pulse/${editingPulse.id}/`,
                 {
-                    method: "POST",
+                    method: "PATCH",
                     headers: { "X-CSRFToken": getCookie("csrftoken") },
                     credentials: "include",
                     body: formData,
