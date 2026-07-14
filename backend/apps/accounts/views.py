@@ -1350,10 +1350,9 @@ class PulseDetailRetrieve(APIView):
             )
 
 
-class PulseCommentsAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, pulse_id):
+@login_required
+def get_pulse_comments(request, pulse_id):
+    if request.method == "GET":
         comments = (
             PulseComment.objects
             .filter(pulse_id=pulse_id)
@@ -1361,399 +1360,289 @@ class PulseCommentsAPIView(APIView):
             .order_by("-pub_date")
         )
 
-        data = [
-            {
+        data = []
+
+        for comment in comments:
+            data.append({
                 "id": comment.id,
                 "user": comment.user.username,
                 "user_id": comment.user.id,
-                "avatar": (
-                    request.build_absolute_uri(comment.user.profile_picture.url)
-                    if comment.user.profile_picture
-                    else None
-                ),
+                "avatar": request.build_absolute_uri(comment.user.profile_picture.url) if comment.user.profile_picture else None,
                 "content": comment.content,
                 "date": comment.pub_date.strftime("%d %b %Y, %H:%M"),
                 "can_delete": comment.can_delete(request.user),
-            }
-            for comment in comments
-        ]
+            })
 
-        return Response(
-            {
-                "success": True,
-                "comments": data,
-            }
-        )
+        return JsonResponse({
+            "success": True,
+            "comments": data
+        })
 
-    def post(self, request, pulse_id):
-        content = request.data.get("content")
 
+    elif request.method == "POST":
+        data = json.loads(request.body)
+        content = data.get("content")
         if not content:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Content is required",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return JsonResponse({
+                "success": False,
+                "error": "Content is required"
+            })
 
         comment = PulseComment.objects.create(
             pulse_id=pulse_id,
             user=request.user,
-            content=content,
+            content=content
+
         )
 
-        return Response(
-            {
-                "success": True,
-                "comment": {
-                    "id": comment.id,
-                    "user": comment.user.username,
-                    "user_id": comment.user.id,
-                    "avatar": (
-                        request.build_absolute_uri(comment.user.profile_picture.url)
-                        if comment.user.profile_picture
-                        else None
-                    ),
-                    "content": comment.content,
-                    "date": comment.pub_date.strftime("%d %b %Y, %H:%M"),
-                    "can_delete": comment.can_delete(request.user),
-                },
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        return JsonResponse({
+            "success": True,
+            "comment": {
+                "id": comment.id,
+                "user": comment.user.username,
+                "user_id": comment.user.id,
+                "avatar": request.build_absolute_uri(
+                    comment.user.profile_picture.url) if comment.user.profile_picture else None,
+                "content": comment.content,
+                "date": comment.pub_date.strftime("%d %b %Y, %H:%M"),
+                "can_delete": comment.can_delete(request.user),
+            }
+        })
+    elif request.method == "DELETE":
 
-    def delete(self, request, pulse_id):
-        # Here pulse_id is actually the comment id, matching your original code.
         comment_id = pulse_id
+        if not comment_id:
+            return JsonResponse({"success": False, "error": "Comment ID required"}, status=400)
 
         try:
             comment = PulseComment.objects.get(id=comment_id)
+            if comment.user != request.user:
+                return JsonResponse({"success": False, "error": "Not allowed"}, status=403)
+            comment.delete()
+            return JsonResponse({"success": True, "message": "Comment deleted"})
         except PulseComment.DoesNotExist:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Comment not found",
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if comment.user != request.user:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Not allowed",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        comment.delete()
-
-        return Response(
-            {
-                "success": True,
-                "message": "Comment deleted",
-            }
-        )
+            return JsonResponse({"success": False, "error": "Comment not found"}, status=404)
+    else:
+        return JsonResponse({
+            "success": False,
+            "error": "Invalid request method"
+        }, status=405)
 
 
-class PulseRatingAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@login_required
+def add_pulse_rating(request, pulse_id):
+    if request.method != "POST":
+        return JsonResponse({"success": False, "error": "Invalid request method"}, status=405)
 
-    def post(self, request, pulse_id):
-        rating_value = request.data.get("rating")
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"success": False, "error": "Invalid JSON"}, status=400)
 
-        if rating_value is None:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Rating is required",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    rating_value = data.get("rating")
 
-        try:
-            rating_value = int(rating_value)
-        except (TypeError, ValueError):
-            return Response(
-                {
-                    "success": False,
-                    "error": "Rating must be an integer",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    if not rating_value or not (1 <= rating_value <= 10):
+        return JsonResponse({"success": False, "error": "Rating must be between 1 and 10"})
 
-        if not 1 <= rating_value <= 10:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Rating must be between 1 and 10",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    try:
+        pulse = Pulse.objects.get(id=pulse_id)
+    except Pulse.DoesNotExist:
+        return JsonResponse({"success": False, "error": "Pulse not found"}, status=404)
 
-        try:
-            pulse = Pulse.objects.get(id=pulse_id)
-        except Pulse.DoesNotExist:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Pulse not found",
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
+    rating_obj, created = PulseRating.objects.update_or_create(
+        pulse=pulse,
+        user=request.user,
+        defaults={"rating": rating_value}
+    )
 
-        rating_obj, created = PulseRating.objects.update_or_create(
-            pulse=pulse,
-            user=request.user,
-            defaults={"rating": rating_value},
-        )
+    all_ratings = PulseRating.objects.filter(pulse=pulse)
+    total_reviews = all_ratings.count()
+    popularity_score = all_ratings.aggregate(avg=models.Avg('rating'))['avg'] or 0
 
-        all_ratings = PulseRating.objects.filter(pulse=pulse)
-        total_reviews = all_ratings.count()
-        popularity_score = all_ratings.aggregate(avg=models.Avg("rating"))["avg"] or 0
+    pulse.total_reviews = total_reviews
+    pulse.popularity_score = Decimal(popularity_score).quantize(Decimal('0.01'))
+    pulse.save(update_fields=['total_reviews', 'popularity_score'])
 
-        pulse.total_reviews = total_reviews
-        pulse.popularity_score = Decimal(popularity_score).quantize(
-            Decimal("0.01")
-        )
-        pulse.save(update_fields=["total_reviews", "popularity_score"])
+    update_user_trust_score_task.delay(pulse.user.id)
 
-        update_user_trust_score_task.delay(pulse.user.id)
+    return JsonResponse({
+        "success": True,
+        "rating": rating_obj.rating,
+        "created": created,
+        "total_reviews": total_reviews,
+        "popularity_score": float(pulse.popularity_score)
+    })
 
-        return Response(
-            {
-                "success": True,
-                "rating": rating_obj.rating,
-                "created": created,
-                "total_reviews": total_reviews,
-                "popularity_score": float(pulse.popularity_score),
-            },
-            status=status.HTTP_200_OK,
-        )
+@login_required
+@csrf_exempt
+def create_pulse_rental(request):
+    if request.method != "POST":
+        return JsonResponse({"success": False, "error": "Invalid request method."}, status=405)
 
-class CreatePulseRentalAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    try:
+        data = json.loads(request.body)
+        pulse_id = data.get("pulse_id")
+        start_date_str = data.get("start_date")
+        end_date_str = data.get("end_date")
+        proposed_price = data.get("proposed_price")
+    except Exception:
+        return JsonResponse({"success": False, "error": "Invalid JSON data."}, status=400)
 
-    def post(self, request):
-        pulse_id = request.data.get("pulse_id")
-        start_date_str = request.data.get("start_date")
-        end_date_str = request.data.get("end_date")
-        proposed_price = request.data.get("proposed_price")
+    if not all([pulse_id, start_date_str, end_date_str, proposed_price]):
+        return JsonResponse({"success": False, "error": "Missing required fields."}, status=400)
 
-        if not all([pulse_id, start_date_str, end_date_str, proposed_price]):
-            return Response(
-                {
-                    "success": False,
-                    "error": "Missing required fields.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    try:
+        pulse = Pulse.objects.get(id=pulse_id)
+    except Pulse.DoesNotExist:
+        return JsonResponse({"success": False, "error": "Pulse not found."}, status=404)
 
-        try:
-            pulse = Pulse.objects.get(id=pulse_id)
-        except Pulse.DoesNotExist:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Pulse not found.",
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
+    if pulse.user == request.user:
+        return JsonResponse({"success": False, "error": "You cannot propose a rental to your own pulse."}, status=403)
 
-        if pulse.user == request.user:
-            return Response(
-                {
-                    "success": False,
-                    "error": "You cannot propose a rental to your own pulse.",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    if pulse.trust_required and not (request.user.trust_score>200 and request.user.is_verified):
+        return JsonResponse({"success": False, "error": "You need a higher trust score to access this."}, status=403)
 
-        if pulse.trust_required and not (
-            request.user.trust_score > 200 and request.user.is_verified
-        ):
-            return Response(
-                {
-                    "success": False,
-                    "error": "You need a higher trust score to access this.",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    start_date = parse_datetime(start_date_str) or parse_date(start_date_str)
+    end_date = parse_datetime(end_date_str) or parse_date(end_date_str)
 
-        start_date = (
-            parse_datetime(start_date_str)
-            or parse_date(start_date_str)
-        )
+    if not start_date or not end_date or start_date > end_date:
+        return JsonResponse({"success": False, "error": "Invalid rental dates."}, status=400)
 
-        end_date = (
-            parse_datetime(end_date_str)
-            or parse_date(end_date_str)
-        )
+    total_days = (end_date - start_date).days + 1
 
-        if not start_date or not end_date or start_date > end_date:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Invalid rental dates.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    try:
+        proposed_price = float(proposed_price)
+        if proposed_price <= 0:
+            raise ValueError
+    except ValueError:
+        return JsonResponse({"success": False, "error": "Proposed price must be positive."}, status=400)
 
-        total_days = (end_date - start_date).days + 1
+    proposed_total = proposed_price * total_days
 
-        try:
-            proposed_price = float(proposed_price)
+    overlapping = PulseRental.objects.filter(
+        pulse=pulse,
+        start_date__lte=end_date,
+        end_date__gte=start_date,
+    ).exists()
 
-            if proposed_price <= 0:
-                raise ValueError
+    if overlapping:
+        return JsonResponse({"success": False, "error": "Selected period overlaps with an existing reservation."}, status=400)
 
-        except ValueError:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Proposed price must be positive.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        proposed_total = proposed_price * total_days
-
-        overlapping = PulseRental.objects.filter(
-            pulse=pulse,
-            start_date__lte=end_date,
-            end_date__gte=start_date,
-        ).exists()
-
-        if overlapping:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Selected period overlaps with an existing reservation.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        rental = PulseRental.objects.create(
-            pulse=pulse,
-            renter=request.user,
-            start_date=start_date,
-            end_date=end_date,
-            total_price=proposed_total,
-            initial_price=proposed_total,
-            status="pending",
-        )
-
-        notification = Notification.objects.create(
-            user=pulse.user,
-            sender=request.user,
-            type="rental_proposal",
-            title="New Rental Proposal",
-            message=(
-                f"{request.user.username} proposed "
-                f"{proposed_total} for {pulse.title}"
-            ),
-            pulse_id=pulse.id,
-            rental_id=rental.id,
-            metadata={
-                "proposed_total": proposed_total,
-            },
-        )
-
-        channel_layer = get_channel_layer()
-
-        async_to_sync(channel_layer.group_send)(
-            f"user_notifications_{pulse.user.id}",
-            {
-                "type": "send_rental_notification",
-                "title": notification.title,
-                "message": notification.message,
-                "pulse_id": pulse.id,
-                "rental_id": rental.id,
-                "proposed_total": proposed_total,
-                "renter_id": request.user.id,
-                "renter_username": request.user.username,
-            },
-        )
-
-        return Response(
-            {
-                "success": True,
-                "rental_id": rental.id,
-                "total_price": proposed_total,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+    rental = PulseRental.objects.create(
+        pulse=pulse,
+        renter=request.user,
+        start_date=start_date,
+        end_date=end_date,
+        total_price=proposed_total,
+        initial_price=proposed_total,
+        status="pending",
+    )
 
 
-class UserRentalsAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    notification = Notification.objects.create(
+        user=pulse.user,
+        sender=request.user,
+        type="rental_proposal",
+        title="New Rental Proposal",
+        message=f"{request.user.username} proposed {proposed_total} for {pulse.title}",
+        pulse_id=pulse.id,
+        rental_id=rental.id,
+        metadata={
+            "proposed_total": proposed_total
+        }
+    )
 
-    def get(self, request):
-        rentals = (
-            PulseRental.objects
-            .filter(pulse__user=request.user)
-            .select_related("pulse", "renter", "last_offer_by")
-        )
 
-        data = [
-            {
+    channel_layer = get_channel_layer()
+
+    async_to_sync(channel_layer.group_send)(
+        f"user_notifications_{pulse.user.id}",
+        {
+            "type": "send_rental_notification",
+            "title": notification.title,
+            "message": notification.message,
+            "pulse_id": pulse.id,
+            "rental_id": rental.id,
+            "proposed_total": proposed_total,
+            "renter_id": request.user.id,
+            "renter_username": request.user.username,
+        }
+    )
+
+    return JsonResponse({
+        "success": True,
+        "rental_id": rental.id,
+        "total_price": proposed_total
+    })
+
+    channel_layer = get_channel_layer()
+    async_to_sync(channel_layer.group_send)(
+        f"user_notifications_{pulse.user.id}",
+        {
+            "type": "send_rental_notification",
+            "title": "New Rental Proposal",
+            "message": f"{request.user.username} proposed {proposed_total} for {pulse.title}",
+            "pulse_id": pulse.id,
+            "rental_id": rental.id,
+            "proposed_total": proposed_total,
+            "renter_id": request.user.id,
+            "renter_username": request.user.username,
+        }
+    )
+
+    return JsonResponse({
+        "success": True,
+        "rental_id": rental.id,
+        "proposed_total": proposed_total
+    })
+
+
+def get_user_rentals(request):
+    if request.method == "GET":
+        rentals = PulseRental.objects.filter(pulse__user=request.user)
+
+        data = []
+        for rental in rentals:
+            data.append({
                 "id": rental.id,
                 "pulse_title": rental.pulse.title,
                 "pulse_type": rental.pulse.pulse_type,
                 "renter": rental.renter.username,
                 "start_date": rental.start_date,
                 "end_date": rental.end_date,
-                "last_offer_by": (
-                    rental.last_offer_by.id
-                    if rental.last_offer_by
-                    else None
-                ),
+                "last_offer_by": rental.last_offer_by.id if rental.last_offer_by else None,
                 "total_price": str(rental.total_price),
                 "initial_price": str(rental.initial_price),
                 "status": rental.status,
-            }
-            for rental in rentals
-        ]
+            })
 
-        return Response(data)
+        return JsonResponse(data, safe=False)
 
 
-class ModifyRentalStatusAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@csrf_exempt
+def modify_rental_status(request, rental_id):
+    try:
+        rental = PulseRental.objects.get(id=rental_id)
+    except PulseRental.DoesNotExist:
+        return JsonResponse({"error": "Rental not found"}, status=404)
 
-    def patch(self, request, rental_id):
-        try:
-            rental = (
-                PulseRental.objects
-                .select_related("pulse", "renter", "last_offer_by")
-                .get(id=rental_id)
-            )
-        except PulseRental.DoesNotExist:
-            return Response(
-                {"error": "Rental not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+    user = request.user
+    is_owner = rental.pulse.user == user
+    is_renter = rental.renter == user
 
-        user = request.user
-
-        is_owner = rental.pulse.user == user
-        is_renter = rental.renter == user
-
+    if request.method == "PATCH":
         if not (is_owner or is_renter):
-            return Response(
-                {"error": "Unauthorized"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            return JsonResponse({"error": "Unauthorized"}, status=403)
 
         try:
-            rental_status = request.data.get("status")
-            new_total_price = request.data.get("total_price")
+            data = json.loads(request.body)
+            status = data.get("status")
+            new_total_price = data.get("total_price")
 
             notify_other_user = False
 
-            if rental_status:
-                rental.status = rental_status
+            if status:
+                rental.status = status
                 rental.last_offer_by = None
 
             if new_total_price is not None:
@@ -1763,37 +1652,26 @@ class ModifyRentalStatusAPIView(APIView):
                 notify_other_user = True
 
             duration = (rental.end_date - rental.start_date).days
-
             if duration <= 0:
                 duration = 1
 
             rental.save()
 
             if notify_other_user:
-                other_user = (
-                    rental.pulse.user
-                    if is_renter
-                    else rental.renter
-                )
+                other_user = rental.pulse.user if is_renter else rental.renter
 
                 notification = Notification.objects.create(
                     user=other_user,
                     sender=user,
                     type="rental_proposal",
                     title="Rental Counteroffer",
-                    message=(
-                        f"{user.username} updated the rental price "
-                        f"for {rental.pulse.title} to {rental.total_price}"
-                    ),
+                    message=f"{user.username} updated the rental price for {rental.pulse.title} to {rental.total_price}",
                     pulse_id=rental.pulse.id,
                     rental_id=rental.id,
-                    metadata={
-                        "new_total_price": rental.total_price,
-                    },
+                    metadata={"new_total_price": rental.total_price}
                 )
 
                 channel_layer = get_channel_layer()
-
                 async_to_sync(channel_layer.group_send)(
                     f"user_notifications_{other_user.id}",
                     {
@@ -1805,97 +1683,55 @@ class ModifyRentalStatusAPIView(APIView):
                         "total_price": rental.total_price,
                         "sender_id": user.id,
                         "sender_username": user.username,
-                    },
+                    }
                 )
 
-            return Response(
-                {
-                    "message": "Rental updated successfully",
-                    "status": rental.status,
-                    "days": duration,
-                    "total_price": rental.total_price,
-                    "last_offer_by": (
-                        rental.last_offer_by.id
-                        if rental.last_offer_by
-                        else None
-                    ),
-                }
-            )
+            return JsonResponse({
+                "message": "Rental updated successfully",
+                "status": rental.status,
+                "days": duration,
+                "total_price": rental.total_price,
+                "last_offer_by": rental.last_offer_by.id if rental.last_offer_by else None
+            })
 
         except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return JsonResponse({"error": str(e)}, status=400)
 
-    def delete(self, request, rental_id):
-        try:
-            rental = PulseRental.objects.select_related("pulse").get(
-                id=rental_id
-            )
-        except PulseRental.DoesNotExist:
-            return Response(
-                {"error": "Rental not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if rental.renter != request.user:
-            return Response(
-                {
-                    "error": "Only the renter can delete this proposal",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    elif request.method == "DELETE":
+        if not is_renter:
+            return JsonResponse({"error": "Only the renter can delete this proposal"}, status=403)
 
         rental.delete()
+        return JsonResponse({"message": "Proposal deleted successfully"})
 
-        return Response(
-            {
-                "message": "Proposal deleted successfully",
-            }
-        )
+    return JsonResponse({"error": "Invalid method"}, status=405)
 
 
-class SignalPulseRentalAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@csrf_protect
+@login_required
+@require_POST
+def signal_pulse_rental(request):
+    try:
+        data = json.loads(request.body)
 
-    def post(self, request):
-        rental_id = request.data.get("rental_id")
-        message = request.data.get("message", "").strip()
+        rental_id = data.get("rental_id")
+        message = data.get("message", "").strip()
 
         if not rental_id:
-            return Response(
-                {
-                    "success": False,
-                    "error": "rental_id is required",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return JsonResponse({"success": False, "error": "rental_id is required"}, status=400)
 
         if not message:
-            return Response(
-                {
-                    "success": False,
-                    "error": "message is required",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return JsonResponse({"success": False, "error": "message is required"}, status=400)
 
-        rental = get_object_or_404(
-            PulseRental.objects.select_related("pulse", "renter"),
-            id=rental_id,
-        )
+        rental = get_object_or_404(PulseRental, id=rental_id)
 
         is_owner = rental.pulse.user == request.user
         is_renter = rental.renter == request.user
 
         if not is_owner and not is_renter:
-            return Response(
-                {
-                    "success": False,
-                    "error": "You are not allowed to report this rental",
-                },
-                status=status.HTTP_403_FORBIDDEN,
+            return JsonResponse(
+                {"success": False, "error": "You are not allowed to report this rental"},
+                status=403
             )
 
         signal = PulseRentalSignal.objects.create(
@@ -1905,101 +1741,123 @@ class SignalPulseRentalAPIView(APIView):
             reported_by_owner=is_owner,
         )
 
-        return Response(
-            {
-                "success": True,
-                "signal_id": signal.id,
-                "reported_by_owner": signal.reported_by_owner,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        return JsonResponse({
+            "success": True,
+            "signal_id": signal.id,
+            "reported_by_owner": signal.reported_by_owner,
+        })
+
+    except json.JSONDecodeError:
+        return JsonResponse({"success": False, "error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        return JsonResponse({"success": False, "error": str(e)}, status=400)
 
 
-class PulseRentalFeedbackAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@login_required
+@require_POST
+def pulse_rental_feedback(request, rental_id):
+    rental = get_object_or_404(PulseRental, id=rental_id)
 
-    def post(self, request, rental_id):
-        rental = get_object_or_404(
-            PulseRental.objects.select_related("pulse__user"),
-            id=rental_id,
-        )
+    try:
+        data = json.loads(request.body)
+        rating = data.get("rating")
+        comment = data.get("comment", "").strip()
+    except json.JSONDecodeError:
+        return JsonResponse({"detail": "Invalid JSON payload."}, status=400)
 
-        rating = request.data.get("rating")
-        comment = request.data.get("comment", "").strip()
+    try:
+        rating = int(rating)
+    except (TypeError, ValueError):
+        return JsonResponse({"detail": "Rating must be an integer."}, status=400)
 
-        try:
-            rating = int(rating)
-        except (TypeError, ValueError):
-            return Response(
-                {
-                    "detail": "Rating must be an integer.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    if rating < 1 or rating > 10:
+        return JsonResponse({"detail": "Rating must be between 1 and 10."}, status=400)
 
-        if rating < 1 or rating > 10:
-            return Response(
-                {
-                    "detail": "Rating must be between 1 and 10.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    pulse_owner = rental.pulse.user
 
-        pulse_owner = rental.pulse.user
+    feedback, feedback_created = PulseFeedback.objects.update_or_create(
+        pulse=rental.pulse,
+        reviewer=request.user,
+        defaults={
+            "owner": pulse_owner,
+            "rating": rating,
+            "comment": comment,
+        }
+    )
 
-        feedback, feedback_created = PulseFeedback.objects.update_or_create(
+    if request.user != rental.pulse.user:
+        pulse_rating, rating_created = PulseRating.objects.update_or_create(
             pulse=rental.pulse,
-            reviewer=request.user,
+            user=request.user,
             defaults={
-                "owner": pulse_owner,
                 "rating": rating,
-                "comment": comment,
-            },
+            }
         )
 
-        if request.user != pulse_owner:
-            PulseRating.objects.update_or_create(
-                pulse=rental.pulse,
-                user=request.user,
-                defaults={
-                    "rating": rating,
-                },
-            )
+    return JsonResponse({
+        "feedback_id": feedback.id,
+        "pulse_id": rental.pulse.id,
+        "rental_id": rental.id,
+        "reviewer_id": request.user.id,
+        "owner_id": pulse_owner.id,
+        "rating": feedback.rating,
+        "comment": feedback.comment,
+        "feedback_created": feedback_created
+    }, status=201 if feedback_created else 200)
 
-        return Response(
-            {
-                "feedback_id": feedback.id,
-                "pulse_id": rental.pulse.id,
-                "rental_id": rental.id,
-                "reviewer_id": request.user.id,
-                "owner_id": pulse_owner.id,
-                "rating": feedback.rating,
-                "comment": feedback.comment,
-                "feedback_created": feedback_created,
-            },
-            status=(
-                status.HTTP_201_CREATED
-                if feedback_created
-                else status.HTTP_200_OK
-            ),
-        )
 
-class RentalProposalsAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@login_required
+@require_POST
+def request_rental_feedback(request, rental_id):
+    urgent_request = get_object_or_404(UrgentRequestOffer, id=rental_id)
 
-    def get(self, request):
-        rentals = (
-            PulseRental.objects
-            .filter(renter=request.user)
-            .select_related(
-                "pulse",
-                "renter",
-                "last_offer_by",
-            )
-        )
+    try:
+        data = json.loads(request.body)
+        rating_val = data.get("rating")
+        comment = data.get("comment", "").strip()
+    except json.JSONDecodeError:
+        return JsonResponse({"detail": "Invalid JSON payload."}, status=400)
 
-        data = [
-            {
+    try:
+        rating_val = int(rating_val)
+    except (TypeError, ValueError):
+        return JsonResponse({"detail": "Rating must be an integer."}, status=400)
+
+    if rating_val < 1 or rating_val > 10:
+        return JsonResponse({"detail": "Rating must be between 1 and 10."}, status=400)
+
+    request_owner = urgent_request.request.user
+
+    feedback, feedback_created = UrgentRequestFeedback.objects.update_or_create(
+        request=urgent_request.request,
+        reviewer=request.user,
+        defaults={
+            "owner": request_owner,
+            "rating": rating_val,
+            "comment": comment,
+        }
+    )
+
+    return JsonResponse({
+        "feedback_id": feedback.id,
+        "request_id": urgent_request.id,
+        "reviewer_id": request.user.id,
+        "owner_id": request_owner.id,
+        "rating": feedback.rating,
+        "comment": feedback.comment,
+        "created": feedback_created,
+    }, status=201 if feedback_created else 200)
+
+
+@login_required
+def get_rental_proposals(request):
+    if request.method == "GET":
+        user = request.user
+        rentals = PulseRental.objects.filter(renter=user)
+
+        data = []
+        for rental in rentals:
+            data.append({
                 "id": rental.id,
                 "pulse_title": rental.pulse.title,
                 "pulse_type": rental.pulse.pulse_type,
@@ -2007,296 +1865,220 @@ class RentalProposalsAPIView(APIView):
                 "start_date": rental.start_date,
                 "end_date": rental.end_date,
                 "total_price": str(rental.total_price),
-                "last_offer_by": (
-                    rental.last_offer_by.id
-                    if rental.last_offer_by
-                    else None
-                ),
+                "last_offer_by": rental.last_offer_by.id if rental.last_offer_by else None,
                 "initial_price": str(rental.initial_price),
                 "status": rental.status,
-            }
-            for rental in rentals
-        ]
+            })
 
-        return Response(data)
-    
+        return JsonResponse(data, safe=False)
 
-class RequestRentalFeedbackAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@login_required
+@require_POST
+def add_pulse_to_favorites(request, pulse_id):
+    try:
+        pulse = Pulse.objects.get(id=pulse_id)
 
-    def post(self, request, rental_id):
-        urgent_request = get_object_or_404(
-            UrgentRequestOffer.objects.select_related("request__user"),
-            id=rental_id,
+        favorite, created = FavoritePulse.objects.get_or_create(
+            pulse=pulse,
+            user=request.user
         )
 
-        rating_val = request.data.get("rating")
-        comment = request.data.get("comment", "").strip()
+        if not created:
+            return JsonResponse({
+                "success": True,
+                "message": "Already in favorites",
+                "favorited": True
+            })
 
-        try:
-            rating_val = int(rating_val)
-        except (TypeError, ValueError):
-            return Response(
-                {
-                    "detail": "Rating must be an integer.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        return JsonResponse({
+            "success": True,
+            "message": "Added to favorites",
+            "favorited": True
+        })
 
-        if rating_val < 1 or rating_val > 10:
-            return Response(
-                {
-                    "detail": "Rating must be between 1 and 10.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    except Pulse.DoesNotExist:
+        return JsonResponse({
+            "success": False,
+            "error": "Pulse not found"
+        }, status=404)
 
-        request_owner = urgent_request.request.user
+    except Exception as e:
+        return JsonResponse({
+            "success": False,
+            "error": str(e)
+        }, status=400)
 
-        feedback, feedback_created = (
-            UrgentRequestFeedback.objects.update_or_create(
-                request=urgent_request.request,
-                reviewer=request.user,
-                defaults={
-                    "owner": request_owner,
-                    "rating": rating_val,
-                    "comment": comment,
-                },
-            )
+
+@login_required
+@require_POST
+def add_pulse_to_favorites(request, pulse_id):
+    try:
+        pulse = Pulse.objects.get(id=pulse_id)
+
+        favorite, created = FavoritePulse.objects.get_or_create(
+            pulse=pulse,
+            user=request.user
         )
 
-        return Response(
-            {
-                "feedback_id": feedback.id,
-                "request_id": urgent_request.id,
-                "reviewer_id": request.user.id,
-                "owner_id": request_owner.id,
-                "rating": feedback.rating,
-                "comment": feedback.comment,
-                "created": feedback_created,
-            },
-            status=(
-                status.HTTP_201_CREATED
-                if feedback_created
-                else status.HTTP_200_OK
-            ),
-        )
+        if not created:
+            return JsonResponse({
+                "success": True,
+                "message": "Already in favorites",
+                "favorited": True
+            })
 
-class AddPulseToFavoritesAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+        return JsonResponse({
+            "success": True,
+            "message": "Added to favorites",
+            "favorited": True
+        })
 
-    def post(self, request, pulse_id):
-        try:
-            pulse = Pulse.objects.get(id=pulse_id)
+    except Pulse.DoesNotExist:
+        return JsonResponse({
+            "success": False,
+            "error": "Pulse not found"
+        }, status=404)
 
-        except Pulse.DoesNotExist:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Pulse not found",
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        try:
-            favorite, created = FavoritePulse.objects.get_or_create(
-                pulse=pulse,
-                user=request.user,
-            )
-
-            if not created:
-                return Response(
-                    {
-                        "success": True,
-                        "message": "Already in favorites",
-                        "favorited": True,
-                    }
-                )
-
-            return Response(
-                {
-                    "success": True,
-                    "message": "Added to favorites",
-                    "favorited": True,
-                },
-                status=status.HTTP_201_CREATED,
-            )
-
-        except Exception as e:
-            return Response(
-                {
-                    "success": False,
-                    "error": str(e),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    except Exception as e:
+        return JsonResponse({
+            "success": False,
+            "error": str(e)
+        }, status=400)
 
 
 
-class DeletePulseFromFavoritesAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@login_required
+@require_http_methods(["DELETE"])
+def delete_pulse_from_favorites(request, pulse_id):
+    try:
+        pulse = Pulse.objects.get(id=pulse_id)
 
-    def delete(self, request, pulse_id):
-        try:
-            pulse = Pulse.objects.get(id=pulse_id)
+        favorite = FavoritePulse.objects.filter(
+            pulse=pulse,
+            user=request.user
+        ).first()
 
-        except Pulse.DoesNotExist:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Pulse not found",
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        if not favorite:
+            return JsonResponse({
+                "success": True,
+                "message": "Not in favorites",
+                "favorited": False
+            })
 
-        try:
-            favorite = FavoritePulse.objects.filter(
-                pulse=pulse,
-                user=request.user,
-            ).first()
+        favorite.delete()
 
-            if not favorite:
-                return Response(
-                    {
-                        "success": True,
-                        "message": "Not in favorites",
-                        "favorited": False,
-                    }
-                )
+        return JsonResponse({
+            "success": True,
+            "message": "Removed from favorites",
+            "favorited": False
+        })
 
-            favorite.delete()
+    except Pulse.DoesNotExist:
+        return JsonResponse({
+            "success": False,
+            "error": "Pulse not found"
+        }, status=404)
 
-            return Response(
-                {
-                    "success": True,
-                    "message": "Removed from favorites",
-                    "favorited": False,
-                }
-            )
-
-        except Exception as e:
-            return Response(
-                {
-                    "success": False,
-                    "error": str(e),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    except Exception as e:
+        return JsonResponse({
+            "success": False,
+            "error": str(e)
+        }, status=400)
 
 
 User = get_user_model()
 
-class SearchUsersAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@csrf_exempt
+@login_required
+def search_users(request):
+    query = request.GET.get("q", "")
 
-    def get(self, request):
-        query = request.query_params.get("q", "")
+    users = User.objects.filter(
+        Q(username__icontains=query) |
+        Q(first_name__icontains=query) |
+        Q(last_name__icontains=query)
+    ).exclude(id=request.user.id)[:20]
 
-        users = (
-            User.objects.filter(
-                Q(username__icontains=query)
-                | Q(first_name__icontains=query)
-                | Q(last_name__icontains=query)
-            )
-            .exclude(id=request.user.id)
-            [:20]
-        )
+    from .models import Follow, PendingFollow, Friendship
 
-        results = []
+    results = []
 
-        for user in users:
-            is_friend = Friendship.objects.filter(
-                user1_id=min(request.user.id, user.id),
-                user2_id=max(request.user.id, user.id),
-            ).exists()
+    for user in users:
+        is_friend = Friendship.objects.filter(
+            user1_id=min(request.user.id, user.id),
+            user2_id=max(request.user.id, user.id),
+        ).exists()
 
-            results.append(
-                {
-                    "id": user.id,
-                    "email": user.email,
-                    "username": user.username,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "profile_picture": (
-                        user.profile_picture.url
-                        if user.profile_picture
-                        else None
-                    ),
-                    "private_account": user.is_private,
-                    "is_following": Follow.objects.filter(
-                        follower=request.user,
-                        following=user,
-                    ).exists(),
-                    "pending_follow": PendingFollow.objects.filter(
-                        requester=request.user,
-                        target=user,
-                    ).exists(),
-                    "is_friend": is_friend,
-                    "is_banned": user.is_banned,
-                }
-            )
+        results.append({
+            "id": user.id,
+            "email": user.email,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "profile_picture": (
+                user.profile_picture.url if user.profile_picture else None
+            ),
+            "private_account": user.is_private,
 
-        return Response({"users": results})
+            "is_following": Follow.objects.filter(
+                follower=request.user,
+                following=user
+            ).exists(),
+
+            "pending_follow": PendingFollow.objects.filter(
+                requester=request.user,
+                target=user
+            ).exists(),
+
+            "is_friend": is_friend,
+            "is_banned": user.is_banned,
+        })
+
+    return JsonResponse({"users": results})
 
 
 
-class UserProfileAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, user_id):
-        user = get_object_or_404(User, id=user_id)
+@login_required
+def user_profile(request, user_id):
+    if request.method == "GET":
+        user = User.objects.get(id=user_id)
 
         is_friend = Friendship.objects.filter(
             user1_id=min(request.user.id, user.id),
             user2_id=max(request.user.id, user.id),
         ).exists()
 
-        pulses = (
-            Pulse.objects.filter(user=user)
-            .prefetch_related("images")
-        )
 
-        urgent_requests = (
-            UrgentRequest.objects.filter(user=user)
-            .prefetch_related("images")
-        )
-
+        pulses = Pulse.objects.filter(user=user).prefetch_related('images')
+        requests = UrgentRequest.objects.filter(user=user).prefetch_related('images')
         pulses_data = [
             {
-                "id": pulse.id,
-                "title": pulse.title,
-                "pulseType": pulse.pulse_type,
-                "category": pulse.category,
-                "price": float(pulse.price),
-                "currencyType": pulse.currencyType,
-                "description": pulse.description,
-                "images": [
-                    request.build_absolute_uri(image.image.url)
-                    for image in pulse.images.all()
-                ],
-                "address": pulse.address,
-                "phone_number": pulse.phone_number,
-                "timestamp": pulse.created_at.strftime("%Y-%m-%d %H:%M"),
-            }
-            for pulse in pulses
+                "id": p.id,
+                "title": p.title,
+                "pulseType": p.pulse_type,
+                "category": p.category,
+                "price": float(p.price),
+                "currencyType": p.currencyType,
+                "description": p.description,
+                "images": [request.build_absolute_uri(img.image.url) for img in p.images.all()],
+                "address": p.address,
+                "phone_number": p.phone_number,
+                "timestamp": p.created_at.strftime("%Y-%m-%d %H:%M"),
+            } for p in pulses
         ]
 
         requests_data = [
             {
-                "id": urgent_request.id,
-                "title": urgent_request.title,
-                "description": urgent_request.description,
-                "category": urgent_request.category,
-                "address": urgent_request.address,
-                "currencyType": urgent_request.currencyType,
-                "max_price": float(urgent_request.max_price),
-                "images": [
-                    request.build_absolute_uri(image.image.url)
-                    for image in urgent_request.images.all()
-                ],
-                "timestamp": urgent_request.created_at.strftime("%Y-%m-%d %H:%M"),
-            }
-            for urgent_request in urgent_requests
+                "id": r.id,
+                "title": r.title,
+                "description": r.description,
+                "category": r.category,
+                "address": r.address,
+                "currencyType": r.currencyType,
+                "max_price": float(r.max_price),
+                "images": [request.build_absolute_uri(img.image.url) for img in r.images.all()],
+                "timestamp": r.created_at.strftime("%Y-%m-%d %H:%M"),
+            } for r in requests
         ]
 
         user_data = {
@@ -2305,17 +2087,10 @@ class UserProfileAPIView(APIView):
             "firstName": user.first_name,
             "lastName": user.last_name,
             "username": user.username,
-            "profilePicture": (
-                request.build_absolute_uri(user.profile_picture.url)
-                if user.profile_picture
-                else None
-            ),
+            "profilePicture": request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None,
             "biography": user.biography,
             "location": (
-                {
-                    "lat": user.location.y,
-                    "lng": user.location.x,
-                }
+                {"lat": user.location.y, "lng": user.location.x}
                 if user.location
                 else None
             ),
@@ -2329,180 +2104,141 @@ class UserProfileAPIView(APIView):
             "private_account": user.is_private,
             "is_following": Follow.objects.filter(
                 follower=request.user,
-                following=user,
+                following=user
             ).exists(),
             "pending_follow": PendingFollow.objects.filter(
                 requester=request.user,
-                target=user,
+                target=user
             ).exists(),
             "is_friend": is_friend,
             "pulses": pulses_data,
             "requests": requests_data,
         }
 
-        return Response({"user": user_data})
+        return JsonResponse({"user": user_data})
+
+    return JsonResponse({"error": "Method not allowed"}, status=405)
 
 
 
-class FollowUserAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@csrf_exempt
+@login_required
+def follow_user(request, user_id):
+    from .models import Follow, PendingFollow
 
-    def post(self, request, user_id):
-        target = get_object_or_404(User, id=user_id)
+    target = User.objects.get(id=user_id)
 
-        if target == request.user:
-            return Response(
-                {
-                    "error": "You cannot follow yourself",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    if Follow.objects.filter(
+        follower=request.user,
+        following=target
+    ).exists():
+        return JsonResponse({"already_following": True})
 
-        if Follow.objects.filter(
-            follower=request.user,
-            following=target,
-        ).exists():
-            return Response(
-                {
-                    "already_following": True,
-                }
-            )
+    if target.is_private:
+        PendingFollow.objects.get_or_create(
+            requester=request.user,
+            target=target
+        )
 
-        if target.is_private:
-            PendingFollow.objects.get_or_create(
-                requester=request.user,
-                target=target,
-            )
+        return JsonResponse({"status": "pending_request_created"})
 
-            return Response(
-                {
-                    "status": "pending_request_created",
-                },
-                status=status.HTTP_201_CREATED,
-            )
+    Follow.objects.get_or_create(
+        follower=request.user,
+        following=target
+    )
+
+    return JsonResponse({"status": "follow_created"})
+
+
+@login_required
+def unfollow_user(request, user_id):
+    from .models import Follow, Friendship
+
+    target = User.objects.get(id=user_id)
+
+    friendship = Friendship.objects.filter(
+        user1_id=min(request.user.id, target.id),
+        user2_id=max(request.user.id, target.id),
+    ).first()
+
+    if friendship:
+        friendship.delete()
 
         Follow.objects.get_or_create(
+            follower=target,
+            following=request.user
+        )
+
+    else:
+        Follow.objects.filter(
             follower=request.user,
-            following=target,
-        )
-
-        return Response(
-            {
-                "status": "follow_created",
-            },
-            status=status.HTTP_201_CREATED,
-        )
-    
-
-class UnfollowUserAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def delete(self, request, user_id):
-        target = get_object_or_404(User, id=user_id)
-
-        friendship = Friendship.objects.filter(
-            user1_id=min(request.user.id, target.id),
-            user2_id=max(request.user.id, target.id),
-        ).first()
-
-        if friendship:
-            friendship.delete()
-
-            # Keep the other direction as a follower
-            Follow.objects.get_or_create(
-                follower=target,
-                following=request.user,
-            )
-
-        else:
-            Follow.objects.filter(
-                follower=request.user,
-                following=target,
-            ).delete()
-
-            PendingFollow.objects.filter(
-                requester=request.user,
-                target=target,
-            ).delete()
-
-        return Response(
-            {
-                "success": True,
-            }
-        )
-
-
-class AcceptFollowRequestAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, request_id):
-        pending = get_object_or_404(
-            PendingFollow,
-            id=request_id,
-            target=request.user,
-        )
-
-        requester = pending.requester
-
-        Follow.objects.get_or_create(
-            follower=requester,
-            following=request.user,
-        )
-
-        pending.delete()
-
-        return Response(
-            {
-                "status": "accepted",
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-class RejectFollowRequestAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def delete(self, request, request_id):
-        PendingFollow.objects.filter(
-            id=request_id,
-            target=request.user,
+            following=target
         ).delete()
 
-        return Response(
-            {
-                "status": "rejected",
+        PendingFollow.objects.filter(
+            requester=request.user,
+            target=target
+        ).delete()
+
+    return JsonResponse({"success": True})
+
+
+@csrf_exempt
+@login_required
+def accept_follow_request(request, request_id):
+    from .models import PendingFollow, Follow
+
+    pending = PendingFollow.objects.get(
+        id=request_id,
+        target=request.user
+    )
+
+    requester = pending.requester
+
+    Follow.objects.get_or_create(
+        follower=requester,
+        following=request.user
+    )
+
+    pending.delete()
+
+    return JsonResponse({"status": "accepted"})
+
+@csrf_exempt
+@login_required
+def reject_follow_request(request, request_id):
+    from .models import PendingFollow
+
+    PendingFollow.objects.filter(
+        id=request_id,
+        target=request.user
+    ).delete()
+
+    return JsonResponse({"status": "rejected"})
+
+@csrf_exempt
+@login_required
+def get_follow_requests(request):
+    from .models import PendingFollow
+
+    requests = PendingFollow.objects.filter(
+        target=request.user
+    ).select_related("requester")
+
+    data = [
+        {
+            "id": r.id,
+            "requester": {
+                "id": r.requester.id,
+                "username": r.requester.username,
+                "first_name": r.requester.first_name,
+                "last_name": r.requester.last_name,
             }
-        )
+        }
+        for r in requests
+    ]
 
-
-class FollowRequestsAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        requests = (
-            PendingFollow.objects
-            .filter(target=request.user)
-            .select_related("requester")
-        )
-
-        data = [
-            {
-                "id": follow_request.id,
-                "requester": {
-                    "id": follow_request.requester.id,
-                    "username": follow_request.requester.username,
-                    "first_name": follow_request.requester.first_name,
-                    "last_name": follow_request.requester.last_name,
-                },
-            }
-            for follow_request in requests
-        ]
-
-        return Response(
-            {
-                "requests": data,
-            }
-        )
+    return JsonResponse({"requests": data})
 
 
 from django.http import JsonResponse
@@ -2512,163 +2248,93 @@ from .models import User, DirectConversation, Friendship, DirectMessage, Group_M
 
 
 
-def handle_create_conversation_sync(user, user2_id, body=None):
+def handle_create_conversation_sync(request, user2_id):
     try:
-        if not user.is_authenticated:
-            return {
-                "error": "Authentication required",
-                "status": 401,
-            }
+        if not request.user.is_authenticated:
+            return {"error": "Authentication required", "status": 401}
 
-        from_pulse = False
+        try:
+            body = json.loads(request.body)
+            from_pulse = body.get("fromPulse", False)
+        except json.JSONDecodeError:
+            from_pulse = False
 
-        if body:
-            try:
-                data = json.loads(body)
-                from_pulse = data.get("fromPulse", False)
-            except json.JSONDecodeError:
-                pass
-
+        user1 = request.user
         try:
             user2 = User.objects.get(id=user2_id)
         except User.DoesNotExist:
-            return {
-                "error": "User not found",
-                "status": 404,
-            }
+            return {"error": "User not found", "status": 404}
 
-        if user.id == user2.id:
-            return {
-                "error": "Cannot chat with yourself",
-                "status": 400,
-            }
+        if user1.id == user2.id:
+            return {"error": "Cannot chat with yourself", "status": 400}
 
-        u_first, u_second = (
-            (user, user2)
-            if user.id < user2.id
-            else (user2, user)
-        )
+        u_first, u_second = (user1, user2) if user1.id < user2.id else (user2, user1)
 
-        is_friend = Friendship.objects.filter(
-            user1_id=u_first.id,
-            user2_id=u_second.id,
-        ).exists()
-
-        is_public = not getattr(user2, "is_private", False)
+        is_friend = Friendship.objects.filter(user1_id=u_first.id, user2_id=u_second.id).exists()
+        is_public = not getattr(user2, 'is_private', False)
 
         if is_friend or is_public or from_pulse:
-            conversation, created = (
-                DirectConversation.objects.get_or_create(
-                    user1=u_first,
-                    user2=u_second,
-                )
+            conversation, created = DirectConversation.objects.get_or_create(
+                user1=u_first,
+                user2=u_second
             )
 
             return {
                 "conversation_id": conversation.id,
                 "created": created,
-                "status": 200,
+                "status": 200
             }
 
-        return {
-            "error": "Privacy settings prevent messaging",
-            "status": 403,
-        }
+        return {"error": "Privacy settings prevent messaging", "status": 403}
 
     except Exception as e:
-        return {
-            "error": str(e),
-            "status": 500,
-        }
+        return {"error": str(e), "status": 500}
 
 
-def fetch_messages_sync(user, chat_type, conversation_id):
-    """
-    Sync database operation for fetching messages.
-    """
+def fetch_messages_sync(request, chat_type, conversation_id):
+    """Safely handles session check and message fetching in sync thread."""
+    if not request.user.is_authenticated:
+        return {"error": "Unauthorized", "status": 401}
 
-    try:
-        if not user.is_authenticated:
-            return {
-                "error": "Unauthorized",
-                "status": 401,
-            }
+    if chat_type == "direct":
+        messages = DirectMessage.objects.filter(conversation_id=conversation_id).order_by('timestamp')[:50]
+    else:
+        messages = Group_Message.objects.filter(conversation_id=conversation_id).order_by('timestamp')[:50]
 
-        if chat_type == "direct":
-            messages = (
-                DirectMessage.objects
-                .filter(conversation_id=conversation_id)
-                .select_related("sender")
-                .order_by("timestamp")[:50]
-            )
+    history = [{
+        "sender_id": msg.sender.id,
+        "sender_username": msg.sender.username,
+        "content": msg.content,
+        "timestamp": msg.timestamp.isoformat(),
+        "is_mine": (msg.sender.id == request.user.id),
+    } for msg in messages]
 
-        else:
-            messages = (
-                Group_Message.objects
-                .filter(conversation_id=conversation_id)
-                .select_related("sender")
-                .order_by("timestamp")[:50]
-            )
-
-        history = [
-            {
-                "sender_id": msg.sender.id,
-                "sender_username": msg.sender.username,
-                "content": msg.content,
-                "timestamp": msg.timestamp.isoformat(),
-                "is_mine": msg.sender.id == user.id,
-            }
-            for msg in messages
-        ]
-
-        return {
-            "history": history,
-            "status": 200,
-        }
-
-    except Exception as e:
-        return {
-            "error": str(e),
-            "status": 500,
-        }
+    return {"history": history, "status": 200}
 
 
 
-class CreateDirectConversationAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+async def create_direct_conversation(request, user2_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
 
-    def post(self, request, user2_id):
+    result = await sync_to_async(handle_create_conversation_sync, thread_sensitive=True)(
+        request, user2_id
+    )
 
-        result = handle_create_conversation_sync(
-            request.user,
-            user2_id,
-        )
-
-        status_code = result.pop("status")
-
-        return Response(
-            result,
-            status=status_code,
-        )
+    status_code = result.pop("status")
+    return JsonResponse(result, status=status_code)
 
 
-class MessageHistoryAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+async def get_message_history(request, chat_type, conversation_id):
+    if request.method != "GET":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
 
-    def get(self, request, chat_type, conversation_id):
+    result = await sync_to_async(fetch_messages_sync, thread_sensitive=True)(
+        request, chat_type, conversation_id
+    )
 
-        result = fetch_messages_sync(
-            request.user,
-            chat_type,
-            conversation_id,
-        )
-
-        status_code = result.pop("status")
-
-        return Response(
-            result,
-            status=status_code,
-        )
+    status_code = result.pop("status")
+    return JsonResponse(result, status=status_code)
 
 
 @login_required
