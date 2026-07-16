@@ -38,7 +38,8 @@ const NotificationHandler = ({ currentUser }) => {
     useEffect(() => {
         if (!currentUser?.id) return;
 
-        const wsUrl = `wss://localhost/ws/notifications/`;
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws/notifications/`;
         const socket = new WebSocket(wsUrl);
 
         socket.onmessage = (e) => {
@@ -391,7 +392,7 @@ function App() {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
     const fetchUser = () => {
-        fetch('https://localhost/accounts/user/', { credentials: 'include' })
+        fetch('/accounts/user/', { credentials: 'include' })
             .then(response => {
                 if (!response.ok) throw new Error("Unauthorized");
                 return response.json();
