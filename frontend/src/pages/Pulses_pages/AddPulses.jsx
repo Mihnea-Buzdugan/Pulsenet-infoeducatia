@@ -438,17 +438,17 @@ function AddPulses() {
                         </div>
 
                         <button
-                            type="button"
-                            className={styles["submit-button"]}
-                            onClick={addPulse}
-                            disabled={isGettingLocation || isSubmitting}
-                            style={{
-                                backgroundColor: isGettingLocation || isSubmitting ? "#4CAF6A" : "#3E8F57",
-                                cursor: isGettingLocation || isSubmitting ? "not-allowed" : "pointer",
-                            }}
-                        >
-                            {isGettingLocation ? "Processing..." : isSubmitting ? "Submitting..." : "Publish listing"}
-                        </button>
+                        type="button"
+                        className={styles["submit-button"]}
+                        onClick={addPulse}
+                        disabled={isGettingLocation || isSubmitting}
+                    >
+                        {isGettingLocation 
+                            ? "📍 Getting location..." 
+                            : isSubmitting 
+                            ? "⏳ Publishing..." 
+                            : "Publish listing"}
+                    </button>
                     </div>
                 </section>
             </div>
