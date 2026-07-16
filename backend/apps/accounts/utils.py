@@ -223,7 +223,7 @@ def calculate_trust_score(user):
 
 # Initialize the LLM (e.g., Llama 3 running on Ollama) and the same embedding model
 llm = OllamaLLM(
-    model="llama3.2",
+    model="llama3.2:3b",
     base_url="http://host.docker.internal:11434"
 )
 embedding_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
