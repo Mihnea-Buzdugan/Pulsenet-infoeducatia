@@ -39,7 +39,7 @@ const SignUp = () => {
         if (csrfFetched.current) return;
         csrfFetched.current = true;
 
-        fetch('https://localhost/accounts/csrf-token/', {
+        fetch('/accounts/csrf-token/', {
             method: 'GET',
             credentials: 'include',
         })
@@ -91,7 +91,7 @@ const SignUp = () => {
         };
 
         try {
-            const response = await fetch('https://localhost/accounts/signup/', {
+            const response = await fetch('/accounts/signup/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -131,7 +131,7 @@ const SignUp = () => {
             return;
         }
 
-        const resp = await fetch('https://localhost/accounts/google_login/', {
+        const resp = await fetch('/accounts/google_login/', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

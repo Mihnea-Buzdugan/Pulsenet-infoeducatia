@@ -225,78 +225,85 @@
 
 .phoneInput {
     display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
     border: 2px solid #f2f4f5;
     border-radius: 4px;
-    overflow: visible;
+    overflow: hidden;
     background-color: #f2f4f5;
 }
 
-.phoneInput input {
-    border: none;
-    flex: 1;
-    border-radius: 0;
-    background-color: #f2f4f5;
-    padding: 12px 6px;
-    font-size: 16px;
-    color: #002f34;
-    outline: none;
+/* react-select wrapper */
+.phoneInput > div:first-child {
+    flex: 0 0 95px;
+    min-width: 0;
 }
 
-
-.phoneInputError {
-    border-color: #f04438;
-}
-
+/* dial code */
 .dialCodePreview {
-    display: flex;
-    align-items: center;
-    margin-left: 10px;
+    flex: 0 0 auto;
+    padding: 0 8px;
     font-size: 1rem;
     font-weight: 500;
     color: #002f34;
     white-space: nowrap;
 }
 
-.phoneError {
-    position: absolute;
-    bottom: -18px;
-    left: 0;
-    font-size: 0.75rem;
-    color: #f04438;
+/* phone number input */
+.phoneInput input {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    border: none;
+    background-color: #f2f4f5;
+    padding: 12px 8px;
+    font-size: 16px;
+    color: #002f34;
+    outline: none;
 }
+
 
 .contact-submit-row {
     display: flex;
     align-items: flex-end;
     gap: 20px;
+    width: 100%;
+}
+
+.contact-submit-row .form-group {
+    min-width: 0;
+    flex: 1;
 }
 
 .submit-button {
     flex-shrink: 0;
-    padding: 12px 30px;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-weight: bold;
-    height: 46px;
-    white-space: nowrap;
 }
 
 @media (max-width: 768px) {
-    .row-group { flex-direction: column; gap: 20px; }
 
     .contact-submit-row {
         flex-direction: column;
         align-items: stretch;
+        gap: 16px;
+    }
+
+    .phoneInput {
+        width: 100%;
+    }
+
+    .phoneInput > div:first-child {
+        flex: 0 0 85px;
+    }
+
+    .dialCodePreview {
+        padding: 0 6px;
+        font-size: 14px;
     }
 
     .submit-button {
         width: 100%;
-        height: auto !important;
-    }
-
-    .form-section {
-        padding: 20px;
+        height: 46px !important;
     }
 }
 

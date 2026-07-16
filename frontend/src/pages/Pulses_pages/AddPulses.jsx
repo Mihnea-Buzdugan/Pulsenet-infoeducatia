@@ -214,7 +214,7 @@ function AddPulses() {
                 formData.append("images", file);
             });
 
-            const response = await fetch("https://localhost/accounts/add_pulse/", {
+            const response = await fetch("/accounts/add_pulse/", {
                 method: "POST",
                 headers: {
                     "X-CSRFToken": getCookie("csrftoken"),
@@ -400,7 +400,7 @@ function AddPulses() {
                 <section className={styles["form-section"]}>
                     <h3 className={styles["section-title"]}>Contact details</h3>
                     <div className={styles["contact-submit-row"]}>
-                        <div className={styles["form-group"]} style={{ flex: 1, marginBottom: 0, position: 'relative' }}>
+                        <div className={styles["form-group"]} style={{ flex: 1, minWidth: 0, marginBottom: 0, position: 'relative' }}>
                             <label className={styles["label-text"]}>Phone number *</label>
                             <div className={`${styles["phoneInput"]} ${phoneError ? styles["phoneInputError"] : ''}`}>
                                 <Select
