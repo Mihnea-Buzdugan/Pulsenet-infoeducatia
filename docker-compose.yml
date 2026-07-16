@@ -4,6 +4,8 @@ services:
   backend:
     build: ./backend
     image: pulsenet_backend  # ✅ build once, reuse
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     container_name: django_backend_pv
     restart: unless-stopped
     command: daphne -b 0.0.0.0 -p 8000 backend.asgi:application
