@@ -97,4 +97,9 @@ urlpatterns = [
     path("resolve-rental-signal/<int:id>/", views.resolve_rental_signal, name='resolve_rental_signal'),
 
     path("ai_chat/", views.ai_chat, name="ai_chat"),
+    path("message_keys/link/start/", views.link_start, name="link_start"),
+    path("message_keys/link/respond/", views.link_respond, name="link_respond"),
+    path("message_keys/link/deliver/", views.link_deliver, name="link_deliver"),
+    path("message_keys/link/fail/", views.link_fail, name="link_fail"),
+    path("message_keys/link/poll/", views.link_poll, name="link_poll"),
 ]

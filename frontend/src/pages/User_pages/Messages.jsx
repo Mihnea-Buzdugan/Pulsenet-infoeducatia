@@ -284,7 +284,12 @@ const Messages = ({ currentUser }) => {
                             </div>
 
                             <div className={styles.sidebarHeader}>
-                                <h2>Messages</h2>
+                                <button
+                                    className={styles.followRequestsBtn}
+                                    onClick={() => navigate("/link-device")}
+                                >
+                                    Link Device
+                                </button>
 
                                 <button
                                     className={styles.followRequestsBtn}

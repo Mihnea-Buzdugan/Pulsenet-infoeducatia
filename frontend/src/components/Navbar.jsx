@@ -134,7 +134,7 @@ function Navbar() {
         localStorage.removeItem('token-expiration');
         clearUserIdCache();
         setIsAuthenticated(false);
-        navigate('/Login');
+        navigate('/login');
     };
 
     const toggleNotifications = async () => {
