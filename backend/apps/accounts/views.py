@@ -4135,3 +4135,156 @@ def ai_chat(request):
             f"Error: {str(e)}",
             status=500
         )
+
+
+# views.py
+from django.core.cache import cache  # or a dedicated model/table with TTL cleanup
+
+SESSION_TTL = 120  # seconds
+
+
+def _session_key(session_id):
+    return f"link:{session_id}"
+
+
+@require_POST
+@login_required
+def link_start(request):
+    """Called by whichever device is SHOWING the QR code."""
+    data = json.loads(request.body)
+    session_id = data["sessionId"]
+    role = data.get("role")  # "source" (has the key) or "sink" (needs the key)
+
+    if role not in ("source", "sink"):
+        return JsonResponse({"message": "Invalid role"}, status=400)
+
+    cache.set(_session_key(session_id), {
+        "user_id": request.user.id,
+        "status": "pending",
+        "initiatorRole": role,
+    }, timeout=SESSION_TTL)
+    return JsonResponse({"ok": True})
+
+
+@require_POST
+@login_required
+def link_respond(request):
+    """
+    Called once by whichever device SCANS the QR code.
+
+    - If the scanner already holds the private key, it acts as the source
+      and includes the encrypted payload right away -> session completes
+      in a single round trip.
+    - If the scanner does NOT hold the private key, it just registers its
+      ephemeral public key and waits (via polling) for the shower to
+      deliver the encrypted payload.
+    """
+    data = json.loads(request.body)
+    session_id = data["sessionId"]
+    key = _session_key(session_id)
+    session = cache.get(key)
+
+    if not session or session["user_id"] != request.user.id:
+        return JsonResponse({"message": "Invalid or expired session"}, status=400)
+
+    if session["status"] != "pending":
+        return JsonResponse({"message": "Session already used"}, status=400)
+
+    responder_pub_key = data["responderPubKey"]
+
+    if "encryptedPrivateKey" in data:
+        session.update({
+            "status": "completed",
+            "senderPubKey": responder_pub_key,
+            "encryptedPrivateKey": data["encryptedPrivateKey"],
+            "iv": data["iv"],
+        })
+        cache.set(key, session, timeout=SESSION_TTL)
+        return JsonResponse({"status": "completed"})
+
+    session.update({
+        "status": "awaiting_source",
+        "responderPubKey": responder_pub_key,
+    })
+    cache.set(key, session, timeout=SESSION_TTL)
+    return JsonResponse({"status": "awaiting_source"})
+
+
+@require_POST
+@login_required
+def link_deliver(request):
+    """
+    Called by the QR-shower when IT holds the private key and the scanner
+    has requested it (i.e. session status is "awaiting_source").
+    """
+    data = json.loads(request.body)
+    session_id = data["sessionId"]
+    key = _session_key(session_id)
+    session = cache.get(key)
+
+    if not session or session["user_id"] != request.user.id:
+        return JsonResponse({"message": "Invalid or expired session"}, status=400)
+
+    if session["status"] != "awaiting_source":
+        return JsonResponse({"message": "Session not awaiting delivery"}, status=400)
+
+    session.update({
+        "status": "completed",
+        "senderPubKey": data["senderPubKey"],
+        "encryptedPrivateKey": data["encryptedPrivateKey"],
+        "iv": data["iv"],
+    })
+    cache.set(key, session, timeout=SESSION_TTL)
+    return JsonResponse({"ok": True})
+
+
+@require_POST
+@login_required
+def link_fail(request):
+    """Either side can report linking is impossible (e.g. neither device has a key)."""
+    data = json.loads(request.body)
+    session_id = data["sessionId"]
+    key = _session_key(session_id)
+    session = cache.get(key)
+
+    if not session or session["user_id"] != request.user.id:
+        return JsonResponse({"message": "Invalid or expired session"}, status=400)
+
+    session.update({"status": "error", "error": data.get("message", "Linking failed")})
+    cache.set(key, session, timeout=SESSION_TTL)
+    return JsonResponse({"ok": True})
+
+
+@require_GET
+@login_required
+def link_poll(request):
+    session_id = request.GET.get("sessionId")
+    session = cache.get(_session_key(session_id))
+
+    if not session or session["user_id"] != request.user.id:
+        return JsonResponse({"status": "not_found"}, status=404)
+
+    status = session["status"]
+
+    if status == "completed":
+        result = {
+            "status": "completed",
+            "senderPubKey": session["senderPubKey"],
+            "encryptedPrivateKey": session["encryptedPrivateKey"],
+            "iv": session["iv"],
+        }
+        cache.delete(_session_key(session_id))  # one-time use
+        return JsonResponse(result)
+
+    if status == "awaiting_source":
+        return JsonResponse({
+            "status": "awaiting_source",
+            "responderPubKey": session["responderPubKey"],
+        })
+
+    if status == "error":
+        error = session.get("error", "Linking failed")
+        cache.delete(_session_key(session_id))
+        return JsonResponse({"status": "error", "message": error})
+
+    return JsonResponse({"status": "pending"})

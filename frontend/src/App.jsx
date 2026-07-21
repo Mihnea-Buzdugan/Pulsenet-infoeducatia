@@ -30,7 +30,7 @@ const Pulses = React.lazy(()=> import('./pages/Pulses_pages/Pulses.jsx'));
 const RequestOffer = React.lazy(() => import('./pages/Requests/RequestOffer'));
 const Contact = React.lazy(() => import('./pages/User_pages/Contact.jsx'));
 const AIChat = React.lazy(() => import('./pages/AIChat'));
-
+const LinkDevice = React.lazy(() => import('./pages/Authentification/LinkDevice.jsx'));
 const NotificationHandler = ({ currentUser }) => {
     const location = useLocation();
     const navigate = useNavigate();
@@ -504,6 +504,7 @@ function App() {
                         <Route path="/request/:id" element={<RequestDetails />} />
                         <Route path="/offer/:requestId" element={<RequestOffer />} />
                         <Route path="/ai-chat" element={<AIChat />} />
+                        <Route path="/link-device" element={<LinkDevice />} />
 
                         <Route path="/admin-page" element={<AdminRoute><Admin /></AdminRoute>} />
                     </Route>
